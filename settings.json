@@ -20,7 +20,8 @@
         "world_info": {
             "globalSelect": [
                 "Eldoria",
-                "ГР — Военное дело"
+                "ГР — Военное дело",
+                "ГР — Персонажи · Империя"
             ],
             "charLore": [
                 {
@@ -864,7 +865,7 @@
     },
     "oai_settings": {
         "preset_settings_openai": "Default",
-        "temp_openai": 1.02,
+        "temp_openai": 1,
         "freq_pen_openai": 0,
         "pres_pen_openai": 0,
         "top_p_openai": 1,

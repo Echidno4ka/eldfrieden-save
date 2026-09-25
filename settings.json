@@ -437,7 +437,8 @@
         "click_to_edit": false,
         "media_display": "list",
         "image_overswipe": "generate",
-        "ui_mode": 1
+        "ui_mode": 1,
+        "wi_key_input_plaintext": true
     },
     "extension_settings": {
         "apiUrl": "http://localhost:5100",

@@ -32,7 +32,7 @@
 pkg update -y && pkg upgrade -y && pkg install -y git && git config --global credential.helper store && read -p "Логин GitHub: " GH && git clone "https://$GH@github.com/$GH/eldfrieden-save.git" ~/eldfrieden-save && bash ~/eldfrieden-save/_tools/android-setup.sh
 ```
 
-4. Перезапустите Termux. Команды: `play` (или `играть`) — игра с автосохранением; `save` — сохранить; `load` — загрузить. Выход из игры с сохранением: CTRL+C в Termux.
+4. Перезапустите Termux (введите `exit` и откройте заново). Команды: `играть` (или `gr-play`) — игра с автосохранением; `сохранить` (`gr-save`); `загрузить` (`gr-load`). Выход из игры с сохранением: CTRL+C в Termux.
 
 ## Если облако и ПК разошлись
 

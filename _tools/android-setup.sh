@@ -35,11 +35,11 @@ cat >> "$HOME/.bashrc" <<EOF
 alias играть='bash $DATA/_tools/android-play.sh' # eldfrieden-save
 alias сохранить='bash $DATA/_tools/android-save.sh' # eldfrieden-save
 alias загрузить='bash $DATA/_tools/android-load.sh' # eldfrieden-save
-alias play='bash $DATA/_tools/android-play.sh' # eldfrieden-save
-alias save='bash $DATA/_tools/android-save.sh' # eldfrieden-save
-alias load='bash $DATA/_tools/android-load.sh' # eldfrieden-save
+alias gr-play='bash $DATA/_tools/android-play.sh' # eldfrieden-save
+alias gr-save='bash $DATA/_tools/android-save.sh' # eldfrieden-save
+alias gr-load='bash $DATA/_tools/android-load.sh' # eldfrieden-save
 EOF
 
 echo
-echo 'Готово. Закройте и снова откройте Termux, затем введите:  play'
+echo 'Готово. Закройте и снова откройте Termux, затем введите:  играть'
 echo 'Ключ API введите в Таверне один раз: на телефоне он хранится отдельно от ПК.'

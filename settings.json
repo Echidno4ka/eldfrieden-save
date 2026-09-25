@@ -3,7 +3,7 @@
     "accountStorage": {
         "__migrated": "1",
         "WINavOpened": "true",
-        "LNavOpened": "true",
+        "LNavOpened": "false",
         "NavOpened": "false",
         "StoryStringValidationCache": "{\"hashCache\":{\"3090278210222208\":{\"fieldsWarned\":{}}}}",
         "SelectedNavTab": "rm_button_characters"
@@ -864,7 +864,7 @@
     },
     "oai_settings": {
         "preset_settings_openai": "Default",
-        "temp_openai": 1,
+        "temp_openai": 1.02,
         "freq_pen_openai": 0,
         "pres_pen_openai": 0,
         "top_p_openai": 1,
@@ -874,7 +874,7 @@
         "repetition_penalty_openai": 1,
         "stream_openai": true,
         "openai_max_context": 451977,
-        "openai_max_tokens": 15000,
+        "openai_max_tokens": 10000,
         "prompts": [
             {
                 "name": "Main Prompt",

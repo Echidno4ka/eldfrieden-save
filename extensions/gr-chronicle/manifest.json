@@ -1,0 +1,11 @@
+{
+    "display_name": "Летопись Эльфридена",
+    "loading_order": 100,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "katolinthyss",
+    "version": "1.0.0",
+    "homePage": ""
+}

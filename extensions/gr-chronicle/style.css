@@ -1,0 +1,22 @@
+.gr-chronicle-view {
+    white-space: pre-wrap;
+    text-align: left;
+    font-family: var(--monoFontFamily, monospace);
+    font-size: 0.9em;
+    line-height: 1.45;
+    margin: 0;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.gr-chronicle-title {
+    margin: 0 0 8px;
+    text-align: left;
+}
+
+.gr-chronicle-meta {
+    opacity: 0.7;
+    font-size: 0.85em;
+    margin-bottom: 8px;
+    text-align: left;
+}

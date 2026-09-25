@@ -1,0 +1,11 @@
+# Ключи API — никогда не выгружать
+secrets.json
+
+# Кэши и служебное, пересоздаётся само
+thumbnails/
+vectors/
+backups/
+content.log
+stats.json
+*.before-gr
+_clone/

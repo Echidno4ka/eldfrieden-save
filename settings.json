@@ -3,7 +3,7 @@
     "accountStorage": {
         "__migrated": "1",
         "WINavOpened": "true",
-        "LNavOpened": "false",
+        "LNavOpened": "true",
         "NavOpened": "false",
         "StoryStringValidationCache": "{\"hashCache\":{\"3090278210222208\":{\"fieldsWarned\":{}}}}",
         "SelectedNavTab": "rm_button_characters"
@@ -873,8 +873,8 @@
         "top_a_openai": 0,
         "repetition_penalty_openai": 1,
         "stream_openai": true,
-        "openai_max_context": 53413,
-        "openai_max_tokens": 10000,
+        "openai_max_context": 451977,
+        "openai_max_tokens": 15000,
         "prompts": [
             {
                 "name": "Main Prompt",
@@ -1146,7 +1146,7 @@
         "tool_reasoning_mode": "disabled",
         "reverse_proxy": "",
         "chat_completion_source": "openrouter",
-        "max_context_unlocked": false,
+        "max_context_unlocked": true,
         "show_external_models": false,
         "proxy_password": "",
         "assistant_prefill": "",
@@ -1166,7 +1166,7 @@
         "continue_postfix": " ",
         "custom_prompt_post_processing": "",
         "show_thoughts": false,
-        "reasoning_effort": "auto",
+        "reasoning_effort": "min",
         "verbosity": "auto",
         "enable_web_search": false,
         "request_images": false,

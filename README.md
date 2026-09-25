@@ -22,6 +22,18 @@
 3. Введите логин GitHub. Скрипт сам поставит Node.js, Git, SillyTavern и скачает сохранения.
 4. Запустите `Играть.bat` и введите ключ API в Таверне.
 
+## Android (Termux)
+
+1. Установите Termux из F-Droid (не из Google Play).
+2. Выпустите токен GitHub: Settings → Developer settings → Fine-grained tokens → Generate. Repository access: только `eldfrieden-save`; Permissions → Contents: Read and write.
+3. Вставьте в Termux (при запросе пароля вставьте токен):
+
+```
+pkg update -y && pkg upgrade -y && pkg install -y git && git config --global credential.helper store && read -p "Логин GitHub: " GH && git clone "https://$GH@github.com/$GH/eldfrieden-save.git" ~/eldfrieden-save && bash ~/eldfrieden-save/_tools/android-setup.sh
+```
+
+4. Перезапустите Termux. Команды: `play` (или `играть`) — игра с автосохранением; `save` — сохранить; `load` — загрузить. Выход из игры с сохранением: CTRL+C в Termux.
+
 ## Если облако и ПК разошлись
 
 Скрипты ничего не удаляют. Перед каждой загрузкой делается локальный резерв. Если слияние не удалось, данные ПК остаются как были, а в резервах есть копия.

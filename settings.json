@@ -4,11 +4,12 @@
         "__migrated": "1",
         "WINavOpened": "true",
         "LNavOpened": "true",
-        "NavOpened": "true",
-        "StoryStringValidationCache": "{\"hashCache\":{\"3090278210222208\":{\"fieldsWarned\":{}}}}"
+        "NavOpened": "false",
+        "StoryStringValidationCache": "{\"hashCache\":{\"3090278210222208\":{\"fieldsWarned\":{}}}}",
+        "SelectedNavTab": "rm_button_selected_ch"
     },
     "currentVersion": "1.19.0",
-    "username": "User",
+    "username": "Крупп",
     "active_character": "Хроники Эльфридена.png",
     "active_group": null,
     "user_avatar": "user-default.png",
@@ -374,16 +375,16 @@
             "max_additions": 1
         },
         "personas": {
-            "user-default.png": "User"
+            "user-default.png": "Крупп"
         },
         "default_persona": null,
         "persona_descriptions": {
             "user-default.png": {
-                "description": "",
+                "description": "{{user}} — Крупп, мужчина 26 лет. Рост 185 см, в меру атлетичное сложение: подтянутый, с развитыми плечами и руками, без перекачанности. Короткие чёрные волосы. Светлая, ровная кожа без шрамов и заметных дефектов.",
                 "position": 0
             }
         },
-        "persona_description": "",
+        "persona_description": "{{user}} — Крупп, мужчина 26 лет. Рост 185 см, в меру атлетичное сложение: подтянутый, с развитыми плечами и руками, без перекачанности. Короткие чёрные волосы. Светлая, ровная кожа без шрамов и заметных дефектов.",
         "persona_description_position": 0,
         "persona_description_role": 0,
         "persona_description_depth": 2,
@@ -856,7 +857,7 @@
         "top_a_openai": 0,
         "repetition_penalty_openai": 1,
         "stream_openai": true,
-        "openai_max_context": 4095,
+        "openai_max_context": 53413,
         "openai_max_tokens": 300,
         "prompts": [
             {
@@ -1081,7 +1082,7 @@
         "group_models": false,
         "openai_model": "gpt-4-turbo",
         "claude_model": "claude-sonnet-5",
-        "google_model": "gemini-3.7-flash",
+        "google_model": "gemini-3.6-flash",
         "vertexai_model": "gemini-3.7-flash",
         "ai21_model": "jamba-large",
         "mistralai_model": "mistral-large-latest",
@@ -1159,8 +1160,8 @@
         "extensions": {}
     },
     "background": {
-        "name": "__transparent.png",
-        "url": "url(\"backgrounds/__transparent.png\")",
+        "name": "bedroom clean.jpg",
+        "url": "url(\"backgrounds/bedroom%20clean.jpg\")",
         "fitting": "classic",
         "animation": false,
         "sortOrder": "az",

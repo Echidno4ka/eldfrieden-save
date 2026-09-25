@@ -17,6 +17,21 @@ function Find-Tool($name, $fallback) {
 $Git = Find-Tool 'git' (Join-Path $env:USERPROFILE 'git\cmd\git.exe')
 $Node = Find-Tool 'node' (Join-Path $env:USERPROFILE 'nodejs\node.exe')
 
+# Уже открытые программы (Проводник) не видят обновлённый PATH до перезахода в Windows,
+# а помощнику входа GitHub нужен git в PATH. Добавляем явно.
+$GitRoot = Split-Path (Split-Path $Git -Parent) -Parent
+$env:Path = "$(Split-Path $Git -Parent);$GitRoot\mingw64\bin;$(Split-Path $Node -Parent);$env:Path"
+
+# Передаёт текст в git через файл: конвейер PowerShell 5.1 искажает ввод для нативных программ.
+function Git-Input([string]$text, [string[]]$gitArgs) {
+    $f = [IO.Path]::GetTempFileName()
+    try {
+        [IO.File]::WriteAllText($f, $text, (New-Object Text.UTF8Encoding $false))
+        $argLine = ($gitArgs | ForEach-Object { "`"$_`"" }) -join ' '
+        return cmd /c "`"$Git`" $argLine < `"$f`""
+    } finally { Remove-Item $f -Force -ErrorAction SilentlyContinue }
+}
+
 function Say($text, $color = 'Gray') { Write-Host $text -ForegroundColor $color }
 
 function Git {

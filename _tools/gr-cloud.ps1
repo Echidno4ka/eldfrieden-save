@@ -11,7 +11,7 @@ if (Test-Remote) {
 
 Say 'Сейчас откроется окно входа в GitHub. Войдите в свой аккаунт и разрешите доступ.' 'Cyan'
 $req = "protocol=https`nhost=github.com`n`n"
-$cred = $req | & $Git credential fill 2>$null
+$cred = Git-Input $req @('credential', 'fill')
 $token = ($cred | Where-Object { $_ -like 'password=*' }) -replace '^password=', ''
 if (-not $token) { Say 'Вход не выполнен. Запустите скрипт ещё раз.' 'Red'; return }
 
@@ -21,10 +21,10 @@ try {
     $me = Invoke-RestMethod https://api.github.com/user -Headers $headers
 } catch {
     Say "GitHub не принял вход: $($_.Exception.Message)" 'Red'
-    "protocol=https`nhost=github.com`n`n" | & $Git credential reject 2>$null
+    Git-Input $req @('credential', 'reject') | Out-Null
     return
 }
-"protocol=https`nhost=github.com`nusername=$($me.login)`npassword=$token`n`n" | & $Git credential approve 2>$null
+Git-Input "protocol=https`nhost=github.com`nusername=$($me.login)`npassword=$token`n`n" @('credential', 'approve') | Out-Null
 
 $repoUrl = "https://github.com/$($me.login)/$RepoName.git"
 try {

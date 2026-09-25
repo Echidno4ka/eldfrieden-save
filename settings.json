@@ -3,10 +3,10 @@
     "accountStorage": {
         "__migrated": "1",
         "WINavOpened": "true",
-        "LNavOpened": "true",
+        "LNavOpened": "false",
         "NavOpened": "false",
         "StoryStringValidationCache": "{\"hashCache\":{\"3090278210222208\":{\"fieldsWarned\":{}}}}",
-        "SelectedNavTab": "rm_button_selected_ch"
+        "SelectedNavTab": "rm_button_characters"
     },
     "currentVersion": "1.19.0",
     "username": "Крупп",
@@ -858,7 +858,7 @@
         "repetition_penalty_openai": 1,
         "stream_openai": true,
         "openai_max_context": 53413,
-        "openai_max_tokens": 300,
+        "openai_max_tokens": 10000,
         "prompts": [
             {
                 "name": "Main Prompt",
@@ -1082,7 +1082,7 @@
         "group_models": false,
         "openai_model": "gpt-4-turbo",
         "claude_model": "claude-sonnet-5",
-        "google_model": "gemini-3.6-flash",
+        "google_model": "gemini-3.5-flash",
         "vertexai_model": "gemini-3.7-flash",
         "ai21_model": "jamba-large",
         "mistralai_model": "mistral-large-latest",
@@ -1127,7 +1127,7 @@
         "openrouter_middleout": "on",
         "tool_reasoning_mode": "disabled",
         "reverse_proxy": "",
-        "chat_completion_source": "makersuite",
+        "chat_completion_source": "openrouter",
         "max_context_unlocked": false,
         "show_external_models": false,
         "proxy_password": "",
@@ -1147,7 +1147,7 @@
         "names_behavior": 0,
         "continue_postfix": " ",
         "custom_prompt_post_processing": "",
-        "show_thoughts": true,
+        "show_thoughts": false,
         "reasoning_effort": "auto",
         "verbosity": "auto",
         "enable_web_search": false,

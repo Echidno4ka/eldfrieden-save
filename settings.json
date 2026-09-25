@@ -524,8 +524,24 @@
             "custom": []
         },
         "connectionManager": {
-            "selectedProfile": "",
-            "profiles": []
+            "selectedProfile": "c514cf5d-ea50-45fb-b9e5-28b84c27daa3",
+            "profiles": [
+                {
+                    "id": "c514cf5d-ea50-45fb-b9e5-28b84c27daa3",
+                    "mode": "cc",
+                    "exclude": [],
+                    "api": "openrouter",
+                    "preset": "Default",
+                    "model": "~deepseek/deepseek-v4-flash-latest",
+                    "proxy": "None",
+                    "stop-strings": "",
+                    "start-reply-with": "",
+                    "reasoning-template": "Think XML",
+                    "prompt-post-processing": "none",
+                    "secret-id": "fc80e2fd-1daf-4666-997f-a9801cc8ab18",
+                    "name": "openrouter ~deepseek/deepseek-v4-flash-latest - Default"
+                }
+            ]
         },
         "dice": {},
         "regex": [],
@@ -1119,9 +1135,11 @@
         "custom_include_body": "",
         "custom_exclude_body": "",
         "custom_include_headers": "",
-        "openrouter_model": "OR_Website",
-        "openrouter_use_fallback": false,
-        "openrouter_providers": [],
+        "openrouter_model": "~deepseek/deepseek-v4-flash-latest",
+        "openrouter_use_fallback": true,
+        "openrouter_providers": [
+            "DeepSeek"
+        ],
         "openrouter_quantizations": [],
         "openrouter_allow_fallbacks": true,
         "openrouter_middleout": "on",

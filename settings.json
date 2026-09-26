@@ -6,7 +6,8 @@
         "LNavOpened": "false",
         "NavOpened": "true",
         "StoryStringValidationCache": "{\"hashCache\":{\"3090278210222208\":{\"fieldsWarned\":{}}}}",
-        "SelectedNavTab": "rm_button_characters"
+        "SelectedNavTab": "rm_button_characters",
+        "WI_PerPage": "10"
     },
     "currentVersion": "1.19.0",
     "username": "Крупп",
@@ -19,8 +20,9 @@
     "world_info_settings": {
         "world_info": {
             "globalSelect": [
-                "Eldoria",
                 "ГР — Военное дело",
+                "ГР — Государства",
+                "ГР — Персонажи · Амидония",
                 "ГР — Персонажи · Империя"
             ],
             "charLore": [
@@ -1137,7 +1139,7 @@
         "custom_include_body": "",
         "custom_exclude_body": "",
         "custom_include_headers": "",
-        "openrouter_model": "~deepseek/deepseek-v4-flash-latest",
+        "openrouter_model": "google/gemini-3.8-flash",
         "openrouter_use_fallback": true,
         "openrouter_providers": [
             "DeepSeek"

@@ -3,7 +3,7 @@
     "accountStorage": {
         "__migrated": "1",
         "WINavOpened": "true",
-        "LNavOpened": "true",
+        "LNavOpened": "false",
         "NavOpened": "true",
         "StoryStringValidationCache": "{\"hashCache\":{\"3090278210222208\":{\"fieldsWarned\":{}}}}",
         "SelectedNavTab": "rm_button_characters"
@@ -868,13 +868,13 @@
         "preset_settings_openai": "Default",
         "temp_openai": 1,
         "freq_pen_openai": 0,
-        "pres_pen_openai": 0,
+        "pres_pen_openai": 2,
         "top_p_openai": 1,
         "top_k_openai": 0,
         "min_p_openai": 0,
         "top_a_openai": 0,
         "repetition_penalty_openai": 1,
-        "stream_openai": true,
+        "stream_openai": false,
         "openai_max_context": 451977,
         "openai_max_tokens": 10000,
         "prompts": [
@@ -1167,7 +1167,7 @@
         "names_behavior": 0,
         "continue_postfix": " ",
         "custom_prompt_post_processing": "semi_tools",
-        "show_thoughts": true,
+        "show_thoughts": false,
         "reasoning_effort": "min",
         "verbosity": "auto",
         "enable_web_search": false,

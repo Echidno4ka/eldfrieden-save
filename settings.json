@@ -1139,7 +1139,7 @@
         "custom_include_body": "",
         "custom_exclude_body": "",
         "custom_include_headers": "",
-        "openrouter_model": "google/gemini-3.8-flash",
+        "openrouter_model": "~google/gemini-flash-latest",
         "openrouter_use_fallback": true,
         "openrouter_providers": [
             "DeepSeek"
@@ -1168,7 +1168,7 @@
         "tool_call_recurse_limit": 5,
         "names_behavior": 0,
         "continue_postfix": " ",
-        "custom_prompt_post_processing": "semi_tools",
+        "custom_prompt_post_processing": "",
         "show_thoughts": false,
         "reasoning_effort": "min",
         "verbosity": "auto",

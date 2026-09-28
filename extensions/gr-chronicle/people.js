@@ -1,14 +1,16 @@
-// «Отношения»: ключевые персонажи и их отношение к {{user}} — доверие (дело) и приязнь (лично).
+// «Отношения»: ключевые персонажи и их отношение к {{user}} — доверие (дело), приязнь (лично), влечение (у тех, с кем возможен роман).
 // Живёт в том же мире, что «Реакция мира»: вести о переменах в стране приходят с задержкой гонца,
 // а личное доверие герцогов входит в их ступень (world.personal).
 import { PEOPLE } from './people.data.js';
 import { REACTION } from './reaction.data.js';
+import { MERA } from './mera.data.js';
 import { advance, attitude } from './reaction.js';
 
-const T = PEOPLE.tempo;
+const T = PEOPLE.tempo, G = PEOPLE.gestures;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const byId = Object.fromEntries(PEOPLE.people.map(p => [p.id, p]));
-const DIMS = { 'Доверие': 'trust', 'Приязнь': 'like' };
+const DIMS = { 'Доверие': 'trust', 'Приязнь': 'like', 'Влечение': 'love' };
+const dimsOf = p => p.romance ? ['trust', 'like', 'love'] : ['trust', 'like'];
 
 export const peopleList = () => PEOPLE.people;
 
@@ -23,20 +25,21 @@ export function initPeople(world, day) {
     world.people = {};
     world.axesLog = world.axesLog || [];
     world.personal = world.personal || {};
+    world.peopleQueue = [];
     for (const p of PEOPLE.people) {
         world.people[p.id] = {
-            level: { trust: p.start.trust, like: p.start.like },   // постоянный след поступков
-            mem: { trust: 0, like: 0 },                             // свежесть событий, остывает
-            seen: {}, cursor: world.axesLog.length,                // что из перемен в стране уже дошло
-            band: { trust: { s: 0, since: day }, like: { s: 0, since: day } },
-            met: p.met, provoked: null, last: [],
+            level: { trust: p.start.trust, like: p.start.like, love: p.start.love || 0 },   // постоянный след поступков
+            mem: { trust: 0, like: 0, love: 0 },                                             // свежесть событий, остывает
+            seen: {}, cursor: world.axesLog.length,                                          // что из перемен в стране уже дошло
+            band: { trust: { s: 0, since: day }, like: { s: 0, since: day }, love: { s: 0, since: day } },
+            met: p.met, provoked: null, last: [], gestures: [],
         };
     }
     // Второй проход: связи читают уже созданных персонажей.
     for (const p of PEOPLE.people) syncPersonal(world, p.id);
     for (const p of PEOPLE.people) {
         const st = world.people[p.id];
-        for (const k of ['trust', 'like']) st.band[k].s = band(value(world, p.id, k));
+        for (const k of dimsOf(p)) st.band[k].s = band(value(world, p.id, k));
     }
     world.peopleDay = day;
     world.peopleBase = day;
@@ -73,7 +76,7 @@ function sourceTrust(world, id) {
 
 export function value(world, id, dim) {
     const p = byId[id], st = world.people[id];
-    if (dim === 'like') return clamp(st.level.like + st.mem.like, -T.levelMax, T.levelMax);
+    if (dim === 'like' || dim === 'love') return p.romance || dim === 'like' ? clamp(st.level[dim] + st.mem[dim], -T.levelMax, T.levelMax) : 0;
     let v = ownTrust(world, id);
     for (const [src, k] of Object.entries(p.ties || {})) v += k * sourceTrust(world, src);
     if (p.actor) {
@@ -90,47 +93,124 @@ function syncPersonal(world, id) {
     if (p.actor) world.personal[p.actor] = T.dukePersonal * (ownTrust(world, id) + Object.entries(p.ties || {}).reduce((s, [src, k]) => s + k * sourceTrust(world, src), 0));
 }
 
-// Разбор строк персонажей из раздела ЭФФЕКТЫ:
-//   «Лисия: Доверие −2; Приязнь +1 — причина»   «ЗНАКОМСТВО: Айша»   «ТРЕБОВАНИЕ: Маркс» (требование — общий разбор мира)
-export function parsePeople(text) {
-    const out = [], meet = [], unknown = [];
-    const norm = s => String(s).replace(/\s*[·•]\s*/g, '·').replace(/[–—]/g, '−');
-    for (const raw of String(text).split('\n')) {
-        const line = norm(raw);
-        const mm = line.match(/ЗНАКОМСТВО:\s*(.+)/);
-        if (mm) { for (const n of mm[1].split(/[,;]\s*/)) { const id = findId(n.trim()); if (id) meet.push(id); } continue; }
-        if (!/Доверие|Приязнь/.test(line)) continue;
-        const who = line.match(/^\s*(?:НА\s+\d+[^:]*:\s*|ЧЕРЕЗ\s+\d+[^:]*:\s*)?([^:]+):/);
-        const id = who && findId(who[1].trim());
-        if (!id) { unknown.push(line.trim()); continue; }
-        const d = { id, trust: 0, like: 0, note: (line.split(/\s[−-]\s|—/).slice(1).join(' ').trim() || '').slice(0, 120) };
-        for (const m of line.matchAll(/(Доверие|Приязнь)\s*([+−\-])\s*(\d+(?:[.,]\d+)?)/g)) {
-            d[DIMS[m[1]]] += (m[2] === '+' ? 1 : -1) * clamp(parseFloat(m[3].replace(',', '.')), 0, 3);
-        }
-        if (d.trust || d.like) out.push(d);
-    }
-    return { events: out, meet, unknown };
-}
-
 export function findId(name) {
     const n = String(name).replace(/[«»"]/g, '').trim().toLowerCase();
     for (const p of PEOPLE.people) if (p.aliases.some(a => n === a.toLowerCase() || n.startsWith(a.toLowerCase() + ' ') || n.endsWith(' ' + a.toLowerCase()))) return p.id;
     return null;
 }
 
-// Применить личные события в день `day`; demand — список id, кому предъявлено прямое требование.
-export function applyPeople(world, parsed, day, demand = []) {
+// Разбор строк персонажей из раздела ЭФФЕКТЫ:
+//   «Лисия: Доверие −2; Приязнь +1; Влечение +1 — причина»   «ЗНАКОМСТВО: Айша»
+//   «ЖЕСТ: Томоэ · подарок · сладости · 300 G — купил на рынке»   «ЖЕСТ: Джуна · флирт · наедине — …»
+export function parsePeople(text) {
+    const out = [], meet = [], gestures = [], unknown = [];
+    for (const raw of String(text).split('\n')) {
+        const line = String(raw).replace(/\s*[•]\s*/g, '·');
+        const mm = line.match(/ЗНАКОМСТВО:\s*(.+)/);
+        if (mm) { for (const n of mm[1].split(/[,;]\s*/)) { const id = findId(n.trim()); if (id) meet.push(id); } continue; }
+        const gm = line.match(/^\s*ЖЕСТ:\s*(.+)$/);
+        if (gm) {
+            const [head, ...rest] = gm[1].split(/\s[—–-]\s/);
+            const parts = head.split('·').map(s => s.trim()).filter(Boolean);
+            const id = findId(parts[0] || '');
+            const type = Object.keys(G.base).find(t => parts.slice(1).some(x => x.toLowerCase().startsWith(t.slice(0, 5))));
+            if (!id || !type) { unknown.push(line.trim()); continue; }
+            const money = parts.find(x => /\d/.test(x) && /G|тыс|млн/.test(x));
+            let g = 0;
+            if (money) {
+                const m = money.match(/(\d[\d\s ]*(?:[.,]\d+)?)\s*(тыс\.?|тысяч\w*|млн|миллион\w*)?/i);
+                g = parseFloat(m[1].replace(/[\s ]/g, '').replace(',', '.')) * (/млн|миллион/i.test(m[2] || '') ? 1e6 : /тыс/i.test(m[2] || '') ? 1e3 : 1);
+            }
+            const sub = parts.slice(1).find(x => !x.toLowerCase().startsWith(type.slice(0, 5)) && !/\d/.test(x) && !/наедине/i.test(x));
+            gestures.push({ id, type, sub: sub ? sub.toLowerCase() : null, g, private: parts.some(x => /наедине/i.test(x)), note: rest.join(' — ').trim().slice(0, 120) });
+            continue;
+        }
+        if (!/Доверие|Приязнь|Влечение/.test(line)) continue;
+        const who = line.match(/^\s*(?:НА\s+\d+[^:]*:\s*|ЧЕРЕЗ\s+\d+[^:]*:\s*)?([^:]+):/);
+        const id = who && findId(who[1].trim());
+        if (!id) { unknown.push(line.trim()); continue; }
+        const d = { id, trust: 0, like: 0, love: 0, note: (line.split(/\s[−–-]\s|—/).slice(1).join(' ').trim() || '').slice(0, 120) };
+        for (const m of line.matchAll(/(Доверие|Приязнь|Влечение)\s*([+−–\-])\s*(\d+(?:[.,]\d+)?)/g)) {
+            d[DIMS[m[1]]] += (m[2] === '+' ? 1 : -1) * clamp(parseFloat(m[3].replace(',', '.')), 0, 3);
+        }
+        if (d.trust || d.like || d.love) out.push(d);
+    }
+    return { events: out, meet, gestures, unknown };
+}
+
+// Вкус к жесту: «подарок:сладости» уточняет «подарок».
+function taste(p, type, sub) {
+    const t = p.tastes || {};
+    if (sub) for (const [k, v] of Object.entries(t)) if (k.startsWith(type + ':') && sub.startsWith(k.split(':')[1].slice(0, 4))) return v;
+    return t[type] ?? 1;
+}
+
+// Вес жеста по осям [приязнь, доверие, влечение] до привыкания.
+function gestureWeight(world, p, gst) {
+    const st = world.people[p.id];
+    if (p.minor && (gst.type === 'флирт' || (gst.type === 'подарок' && /украшен|цвет|духи/.test(gst.sub || '')))) return [...G.minor];
+    const tv = taste(p, gst.type, gst.sub);
+    let [like, trust, love] = G.base[gst.type];
+    if (gst.type === 'подарок') {
+        const daily = MERA.economy.status[p.tier] * MERA.economy.WAGE;
+        const r = gst.g / daily;
+        like = (G.gift.find(([lim]) => lim != null && r < lim) || G.gift[G.gift.length - 1])[1];
+        if (r < G.gift[0][0] && p.proud && MERA.economy.status[p.tier] >= MERA.economy.status['знать']) return [G.giftSlight, 0, 0];
+        if (tv < 0) return r > G.bribeRatio ? [tv * 0.5, tv * 0.5, 0] : [0.2, 0, 0]; // не берёт подарков: мелочь — вежливость, дорогое — взятка
+        love = p.romance && st.band.like.s >= 1 ? 0.3 : 0;
+    }
+    if (gst.type === 'флирт') {
+        if (!p.romance) return [G.unwelcome * 0.6, 0, 0];                       // не к месту: занят, в браке, не тот человек
+        if (st.band.like.s < 1) return [G.unwelcome, 0, G.unwelcome];          // навязчиво: ещё не тепло
+    }
+    const m = tv;
+    return [like * m, trust * Math.max(0, m), p.romance ? love * Math.max(0, m) : 0];
+}
+
+// Применить личные события и жесты в день `day`; demand — имена, кому предъявлено прямое требование.
+export function applyPeople(world, parsed, day, demand = [], delayOf = () => 1) {
+    world.peopleQueue = world.peopleQueue || [];
+    // Событие: постоянный след + свежесть поверх. Жест (keep < 1): весит ровно v — доля keep навсегда, остальное остывает.
+    const put = (st, k, v, keep) => {
+        if (keep >= 1) { st.level[k] = clamp(st.level[k] + v, -T.levelMax, T.levelMax); st.mem[k] += T.memoryShock * v; return; }
+        st.level[k] = clamp(st.level[k] + v * keep, -T.levelMax, T.levelMax); st.mem[k] += v * (1 - keep);
+    };
     for (const e of parsed.events) {
         const st = world.people[e.id];
         if (!st) continue;
-        for (const k of ['trust', 'like']) {
-            if (!e[k]) continue;
-            st.level[k] = clamp(st.level[k] + e[k], -T.levelMax, T.levelMax);
-            st.mem[k] += T.memoryShock * e[k];
-        }
+        for (const k of ['trust', 'like', 'love']) if (e[k] && (k !== 'love' || byId[e.id].romance)) put(st, k, e[k], 1);
         st.met = true;
-        st.last.unshift({ day, trust: e.trust, like: e.like, note: e.note });
+        st.last.unshift({ day, trust: e.trust, like: e.like, love: e.love, note: e.note });
         st.last = st.last.slice(0, 3);
+    }
+    // Жесты: вкусы, привыкание, предел за сцену; на виду — ревность тех, кто влюблён в {{user}}.
+    const batch = {};
+    for (const gst of parsed.gestures || []) {
+        const p = byId[gst.id], st = world.people[gst.id];
+        if (!st) continue;
+        st.gestures = (st.gestures || []).filter(x => day - x.day < G.habitWindow);
+        const habit = Math.pow(G.habitMult, st.gestures.filter(x => x.type === gst.type).length);
+        st.gestures.push({ day, type: gst.type });
+        const [lk, tr, lv] = gestureWeight(world, p, gst).map(v => v * habit);
+        const b = batch[gst.id] = batch[gst.id] || { like: 0, trust: 0, love: 0 };
+        const cap = (k, v) => { const nv = clamp(b[k] + v, -G.batchCap, G.batchCap); const d = nv - b[k]; b[k] = nv; return d; };
+        const dl = cap('like', lk), dt = cap('trust', tr), dv = cap('love', lv);
+        if (dl) put(st, 'like', dl, G.keep);
+        if (dt) put(st, 'trust', dt, G.keep);
+        if (dv && p.romance) put(st, 'love', dv, G.keep);
+        st.met = true;
+        st.last.unshift({ day, trust: dt, like: dl, love: dv, note: `${gst.type}${gst.sub ? ' (' + gst.sub + ')' : ''}${gst.g ? ', ' + Math.round(gst.g) + ' G' : ''}${gst.note ? ': ' + gst.note : ''}` });
+        st.last = st.last.slice(0, 3);
+        const romantic = gst.type === 'флирт' || (gst.type === 'подарок' && lv > 0);
+        if (romantic && !gst.private) {
+            for (const q of PEOPLE.people) {
+                if (q.id === gst.id || !q.romance) continue;
+                const sq = world.people[q.id];
+                if (sq.band.love.s < 2) continue;                                   // ревнуют влюблённые
+                const hurt = -G.jealousy * (1 - (q.tolerance ?? 0.5));
+                if (hurt) world.peopleQueue.push({ at: day + Math.max(0, delayOf(q.id) - 1), id: q.id, like: hurt, note: `ревность: {{user}} ухаживает за ${p.name}` });
+            }
+        }
     }
     for (const id of parsed.meet) if (world.people[id]) world.people[id].met = true;
     for (const raw of demand) {
@@ -141,8 +221,16 @@ export function applyPeople(world, parsed, day, demand = []) {
     return world;
 }
 
-// Один день для персонажей: дошедшие вести, остывание, ступени.
-function stepPeople(world, day, delayOf) {
+// Один день для персонажей: дошедшие вести и слухи, остывание, ступени.
+export function stepPeople(world, day, delayOf) {
+    if (day <= world.peopleDay) return;
+    for (const q of (world.peopleQueue || []).filter(x => x.at <= day)) {
+        const st = world.people[q.id];
+        st.mem.like += q.like * (1 - G.keep);
+        st.level.like = clamp(st.level.like + q.like * G.keep, -T.levelMax, T.levelMax);
+        st.last.unshift({ day, like: q.like, note: q.note }); st.last = st.last.slice(0, 3);
+    }
+    if (world.peopleQueue) world.peopleQueue = world.peopleQueue.filter(x => x.at > day);
     for (const p of PEOPLE.people) {
         const st = world.people[p.id];
         const delay = delayOf(p.id);
@@ -151,15 +239,15 @@ function stepPeople(world, day, delayOf) {
             if ((e.origin ?? st.cursor) >= world.peopleBaseSeq) for (const [axis, v] of Object.entries(e.d)) st.seen[axis] = (st.seen[axis] || 0) + v;
             st.cursor++;
         }
-        for (const k of ['trust', 'like']) {
-            const hl = (k === 'trust' ? T.halfLifeTrust : T.halfLifeLike) * (p.proud ? T.proudFactor : 1);
+        for (const k of ['trust', 'like', 'love']) {
+            const hl = (k === 'trust' ? T.halfLifeTrust : k === 'like' ? T.halfLifeLike : T.halfLifeLove) * (p.proud ? T.proudFactor : 1);
             st.mem[k] *= Math.pow(0.5, 1 / hl);
         }
     }
     for (const p of PEOPLE.people) syncPersonal(world, p.id);
     for (const p of PEOPLE.people) {
         const st = world.people[p.id];
-        for (const k of ['trust', 'like']) {
+        for (const k of dimsOf(p)) {
             const b = st.band[k];
             const v = value(world, p.id, k);
             const target = band(v);
@@ -181,7 +269,7 @@ function stepPeople(world, day, delayOf) {
     world.peopleDay = day;
 }
 
-// Продвинуть мир и персонажей вместе, день за днём.
+// Продвинуть мир и персонажей вместе, день за днём (без казны; полный порядок — world.js).
 export function advanceAll(world, toDay, delayOf) {
     if (!world.people) return advance(world, toDay);
     for (let day = Math.max(world.lastDay, world.peopleDay) + 1; day <= toDay; day++) {
@@ -191,10 +279,9 @@ export function advanceAll(world, toDay, delayOf) {
     return world;
 }
 
-const name = (id) => byId[id].name;
 const fmtV = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1).replace('.', ',');
 
-// Сводка для рассказчика: ступени дела и личного, тенденция, свежий повод.
+// Сводка для рассказчика: ступени дела, личного и влечения, тенденция, свежий повод.
 export function peopleSummary(world, fmtDate) {
     return PEOPLE.people.map(p => {
         const st = world.people[p.id];
@@ -211,8 +298,10 @@ export function peopleSummary(world, fmtDate) {
         let personal = `${PEOPLE.ladders.like[String(st.band.like.s)]} (${fmtV(lv)})`;
         const tl = band(lv);
         if (tl !== st.band.like.s) personal += tl > st.band.like.s ? ' · теплеет' : ' · остывает';
+        let love = '';
+        if (p.romance && (st.band.love.s || Math.abs(value(world, p.id, 'love')) >= 0.5)) love = `; влечение — ${PEOPLE.ladders.love[String(st.band.love.s)]} (${fmtV(value(world, p.id, 'love'))})`;
         const fresh = st.last[0] ? ` · свежее (${fmtDate(st.last[0].day)}): ${st.last[0].note || 'без пояснения'}` : '';
         if (!st.met) return `${p.name}: не знакомы; по слухам — дело: ${deed}`;
-        return `${p.name}: дело — ${deed}; лично — ${personal}${fresh}`;
+        return `${p.name}: дело — ${deed}; лично — ${personal}${love}${p.minor ? ' · ребёнок: никаких ухаживаний' : ''}${fresh}`;
     }).join('\n');
 }

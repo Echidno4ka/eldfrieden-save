@@ -18,8 +18,14 @@ export function attitude(world, a) {
     const axes = world.perceived[a.id];
     let s = 0;
     for (const [axis, w] of Object.entries(a.watch)) s += w * (axes[axis] ?? 0);
-    // world.personal — личное доверие к {{user}} (для герцогов, из «Отношений»).
-    return a.base + 2 * s / weightSum(a) + (world.memory[a.id] || 0) + (world.personal?.[a.id] || 0);
+    // follows — за кем идёт актор: недовольство знати уводит офицеров-дворян (только худшее, и без цепочек).
+    let f = 0;
+    for (const [id, k] of Object.entries(a.follows || {})) {
+        const b = R.actors.find(x => x.id === id);
+        if (b && !b.follows && !world.removed.includes(id)) f += k * Math.min(0, attitude(world, b));
+    }
+    // world.personal — личное доверие к {{user}} (для герцогов, из «Отношений»); grievance — застарелая нужда.
+    return a.base + 2 * s / weightSum(a) + f + (world.memory[a.id] || 0) + (world.grievance?.[a.id] || 0) + (world.personal?.[a.id] || 0);
 }
 
 function targetStage(att) {
@@ -157,10 +163,18 @@ export function advance(world, toDay) {
             if (q.demand) world.provoked[a.id] = day + T.provokeDays;
         }
         // память тает; застарелая нужда копит обиду; ступени движутся не быстрее темпа
+        world.grievance = world.grievance || {};
         for (const a of activeActors(world)) {
-            world.memory[a.id] *= Math.pow(0.5, 1 / (isExt(a) ? T.halfLifeExternal : T.halfLifeInternal));
-            const stat = attitude(world, a) - world.memory[a.id];
-            if (stat < T.driftFrom) world.memory[a.id] += (isExt(a) ? T.driftExternal : T.driftInternal) * (stat - T.driftFrom);
+            const half = Math.pow(0.5, 1 / (isExt(a) ? T.halfLifeExternal : T.halfLifeInternal));
+            world.memory[a.id] *= half;
+            let g = world.grievance[a.id] || 0;
+            const stat = attitude(world, a) - world.memory[a.id] - g;
+            if (stat < T.driftFrom) {
+                // Беда не решена: обида копится и не тает, но не глубже предела, заданного самой бедой.
+                const cap = (a.grievanceMax ?? T.grievanceMax ?? 1) * (stat - T.driftFrom);
+                g = Math.max(cap, g + (isExt(a) ? T.driftExternal : T.driftInternal) * (stat - T.driftFrom));
+            } else g *= half;                     // беды нет — старая обида остывает, как память
+            world.grievance[a.id] = g;
             const st = world.stage[a.id];
             const att = attitude(world, a);
             const target = targetStage(att);

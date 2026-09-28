@@ -178,7 +178,16 @@ export function applyPeople(world, parsed, day, demand = [], delayOf = () => 1) 
     for (const e of parsed.events) {
         const st = world.people[e.id];
         if (!st) continue;
-        for (const k of ['trust', 'like', 'love']) if (e[k] && (k !== 'love' || byId[e.id].romance)) put(st, k, e[k], 1);
+        st.lastEv = st.lastEv || {};
+        for (const k of ['trust', 'like', 'love']) {
+            if (!e[k] || (k === 'love' && !byId[e.id].romance)) continue;
+            // Зло помнится сильнее добра: тяжкая обида (−3: предал, унизил при всех) весит больше трёх мелочей,
+            // а обида снова в течение месяца — уже курс, а не случай. Добрые дела — линейно.
+            const prev = st.lastEv[k];
+            const f = e[k] >= 0 ? 1 : (e[k] <= -3 ? (T.graveFactor ?? 1) : 1) * (prev && prev.v < 0 && day - prev.day <= (T.repeatWindow ?? 0) ? (T.repeatFactor ?? 1) : 1);
+            put(st, k, e[k] * f, 1);
+            st.lastEv[k] = { day, v: e[k] };
+        }
         st.met = true;
         st.last.unshift({ day, trust: e.trust, like: e.like, love: e.love, note: e.note });
         st.last = st.last.slice(0, 3);

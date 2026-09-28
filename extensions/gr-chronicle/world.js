@@ -4,7 +4,7 @@
 import { parseEffects, applyEffects, advance } from './reaction.js';
 import { PEOPLE } from './people.data.js';
 import { initPeople, parsePeople, applyPeople, stepPeople, findId } from './people.js';
-import { initEconomy, parseEconomy, applyEconomy, stepEconomy } from './economy.js';
+import { initEconomy, parseEconomy, applyEconomy, stepEconomy, chargeGifts } from './economy.js';
 
 export const PEOPLE_LINE = /Доверие|Приязнь|Влечение|ЗНАКОМСТВО|^\s*ЖЕСТ:/;
 // (\b с кириллицей в JS не работает — граница задаётся явно)
@@ -74,7 +74,7 @@ export function applyBatch(world, text, day, delays, note = '') {
     let eco = { unknown: [] }, notes = [], people = { unknown: [] };
     try { eco = parseEconomy(ecoText); notes = world.eco ? applyEconomy(world, eco, day, fallback, delays.actor) : []; }
     catch (e) { errors.push('хозяйство: ' + (e?.message || e)); }
-    try { people = parsePeople(peopleText); if (world.people) applyPeople(world, people, day, demandNames, delays.person); }
+    try { people = parsePeople(peopleText); if (world.people) applyPeople(world, people, day, demandNames, delays.person); if (world.eco) chargeGifts(world, people.gestures, day); }
     catch (e) { errors.push('отношения: ' + (e?.message || e)); }
     return { unknownAxes: parsed.unknown, unknownEco: eco.unknown, unknownPeople: people.unknown, errors, repeats: notes.filter(n => n === 'повтор').length, resourcesWritten: notes.includes('Ресурсы') || (fallback && (fallback.later.length || fallback.temp.length) > 0) };
 }

@@ -36,7 +36,7 @@ const sign = s => (s === '−' || s === '-' || s === '–') ? -1 : 1;
 
 // ---- состояние ----
 function resourcesOf(eco) {
-    const runway = (eco.cash - eco.debt - eco.arrears) / spendMonth();
+    const runway = (eco.cash - eco.debt - eco.arrears - (eco.loan || 0)) / spendMonth();
     return clamp(runway / L.runwayUnit, -REACTION.tempo.axisMax, REACTION.tempo.axisMax);
 }
 
@@ -88,6 +88,7 @@ export function parseEconomy(text) {
             continue;
         }
         if (/^ДОЛГ ВОЙСКУ:/.test(line)) { r.armyPay = true; continue; }
+        if (/^ДОЛГ:\s*(отказ|не\s*призна|аннулир)/i.test(line)) { r.repudiate = true; continue; }
         if ((m = line.match(/^ДОЛГ:\s*(.*)$/))) {
             const mm = m[1].match(MONEY);
             const g = mm && /\d/.test(mm[2]) ? parseG(mm[2], mm[3]) : Infinity;
@@ -124,27 +125,35 @@ function marketLag(market) {
 }
 
 // fallback — «Ресурсы ±n», которые Летописец написал вместо суммы: { now, later:[{days, points, note}], temp:[{days, points, note}] }.
+const TRADE_LOSSES_STOP = 2;    // столько убыточных рейсов подряд — и торговое дело встаёт
+const ARREARS_HIT_MAX = 3;     // сколько раз невозвращённый долг жалованья ударит по войску сверх самой задержки
 // Защита от повторов: доклады и пропуски времени пересказывают прошлые решения — второй раз их не считаем.
 const HOARD_REPEAT_DAYS = 96;                                   // вторая продажа за сезон — только явно («ещё», «снова»)
 const HOARD_AGAIN = /ещ[её]|дополнительн|снова|повторн|втор/i;
 const HOARD_PROCEEDS = /сокровищ|ценност|драгоцен|распрода/i;   // выручку от продажи сокровищ код уже зачислил
-const DEBT_NOTE = /дан[ьиью]|долг[а-я]* импери|импери[а-я]* долг|погашени[а-я]* долга/i;
+// Правдоподобие сумм (доли годового дохода короны из «Меры»): модель не может напечатать деньги или разорить корону одной строкой.
+const ONE_OFF_FREE = 0.05;      // разовый доход без названного источника — не больше
+const ONE_OFF_SOURCED = 0.5;    // с источником (конфискация, продажа, пошлины…) — не больше
+const LOAN_MAX = 0.5;           // долг банкирам всего — не больше
+const RECUR_IN = 0.2, RECUR_OUT = 0.3;   // постоянная статья — доля месячного дохода
+const INCOME_SOURCE = /конфиск|изъят|прода|выкуп|трофе|контрибуц|пошлин|налог|подат|сбор|пожертв|откуп|аренд|выручк|доход с|рейс/i;
+const LOAN = /за[её]м|займ|кредит|в долг у|банкир|менял/i;
+// Потратить не больше, чем дадут казна и банкиры; вернуть, сколько реально ушло.
+function spend(eco, day, g, note, notes) {
+    const avail = Math.max(0, eco.cash + E.credit);
+    if (g <= avail) { eco.cash -= g; return g; }
+    eco.cash -= avail;
+    logEco(eco, day, `не хватило денег: ${note} — оплачено ${fmtG(avail)} из ${fmtG(g)}`);
+    notes.push('урезано');
+    return avail;
+}
+const DEBT_NOTE =/дан[ьиью]|долг[а-я]* импери|импери[а-я]* долг|погашени[а-я]* долга/i;
 const entKey = s => String(s).toLowerCase().replace(/ё/g, 'е').replace(/[«»"'„“]/g, '').replace(/\s+/g, ' ').trim();
 
 export function applyEconomy(world, parsed, day, fallback = null, delayActor = () => 1) {
     const eco = world.eco;
     const notes = [];
-    for (const c of parsed.cash) {
-        if (c.g > 0 && eco.lastHoardDay != null && HOARD_PROCEEDS.test(c.note)) { logEco(eco, day, `повтор не учтён: ${fmtG(c.g)} — ${c.note} (выручка сокровищницы уже зачислена)`); notes.push('повтор'); continue; }
-        // Дань или долг, записанные тратой КАЗНА, гасят долг Империи — не больше самого долга (сумму берём из «Меры», не из фантазии).
-        if (c.g < 0 && eco.debt > 0 && DEBT_NOTE.test(c.note)) {
-            const g = Math.min(-c.g, eco.debt);
-            eco.debt -= g; eco.cash -= g;
-            logEco(eco, day, `погашено долга ${fmtG(g)} — ${c.note}${-c.g > g ? ` (записано ${fmtG(-c.g)}, долг был меньше)` : ''}`);
-            continue;
-        }
-        eco.cash += c.g; logEco(eco, day, `${fmtG(c.g)} — ${c.note}`);
-    }
+    // Сначала сокровищница: её выручка оплачивает траты той же пачки.
     for (const h of parsed.hoard) {
         if (eco.lastHoardDay != null && day - eco.lastHoardDay < HOARD_REPEAT_DAYS && !HOARD_AGAIN.test(h.note)) { logEco(eco, day, `повтор не учтён: продажа сокровищницы уже была ${day - eco.lastHoardDay} дн. назад`); notes.push('повтор'); continue; }
         const g = eco.hoard * h.share;
@@ -152,21 +161,62 @@ export function applyEconomy(world, parsed, day, fallback = null, delayActor = (
         eco.lastHoardDay = day;
         logEco(eco, day, `продано из сокровищницы ${fmtG(g)} (${Math.round(h.share * 100)}%)`);
     }
+    for (const c of parsed.cash) {
+        if (c.g > 0 && eco.lastHoardDay != null && HOARD_PROCEEDS.test(c.note)) { logEco(eco, day, `повтор не учтён: ${fmtG(c.g)} — ${c.note} (выручка сокровищницы уже зачислена)`); notes.push('повтор'); continue; }
+        // Заём у банкиров — не подарок: долг с процентами, не больше предела доверия банкиров.
+        if (c.g > 0 && LOAN.test(c.note)) {
+            const g = Math.min(c.g, Math.max(0, LOAN_MAX * E.revenueYear - (eco.loan || 0)));
+            eco.loan = (eco.loan || 0) + g; eco.cash += g;
+            logEco(eco, day, g < c.g ? `заём ${fmtG(g)} из ${fmtG(c.g)} — ${c.note} (больше банкиры не дают)` : `заём ${fmtG(g)} — ${c.note} (${Math.round(L.interestMonth * 100)}% в месяц)`);
+            if (g < c.g) notes.push('урезано');
+            continue;
+        }
+        // Правдоподобие: крупный доход — только из названного источника.
+        if (c.g > 0) {
+            const src = INCOME_SOURCE.test(c.note);
+            const lim = (src ? ONE_OFF_SOURCED : ONE_OFF_FREE) * E.revenueYear;
+            if (c.g > lim) { logEco(eco, day, `урезано: ${fmtG(c.g)} — ${c.note} → ${fmtG(lim)} (${src ? 'больше полугодового дохода короны' : 'без источника: конфискация, продажа, пошлины, заём'})`); notes.push('урезано'); c.g = lim; }
+        }
+        // Дань или долг, записанные тратой КАЗНА, гасят долг Империи — не больше самого долга (сумму берём из «Меры», не из фантазии).
+        if (c.g < 0 && eco.debt > 0 && DEBT_NOTE.test(c.note)) {
+            const g = spend(eco, day, Math.min(-c.g, eco.debt), c.note, notes);
+            eco.debt -= g;
+            logEco(eco, day, `погашено долга ${fmtG(g)} — ${c.note}${-c.g > g ? ` (записано ${fmtG(-c.g)})` : ''}`);
+            continue;
+        }
+        if (c.g < 0) { const g = spend(eco, day, -c.g, c.note, notes); logEco(eco, day, `${fmtG(-g)} — ${c.note}`); continue; }
+        eco.cash += c.g; logEco(eco, day, `${fmtG(c.g)} — ${c.note}`);
+    }
     for (const d of parsed.debt) {
-        const g = Math.min(d.g, eco.debt);
-        eco.debt -= g; eco.cash -= g;
+        if (LOAN.test(d.note) && eco.loan > 0) {            // вернуть банкирам
+            const g = spend(eco, day, Math.min(d.g, eco.loan), d.note, notes);
+            eco.loan -= g; logEco(eco, day, `возвращено банкирам ${fmtG(g)}`); continue;
+        }
+        const g = spend(eco, day, Math.min(d.g, eco.debt), d.note || 'дань Империи', notes);
+        eco.debt -= g;
         logEco(eco, day, `погашено долга ${fmtG(g)}${d.note ? ' — ' + d.note : ''}`);
     }
+    if (parsed.repudiate && eco.debt > 0) {
+        logEco(eco, day, `долг Империи ${fmtG(eco.debt)} не признан`);
+        eco.debt = 0;
+        applyEffects(world, { deltas: { 'Выгода·Империя': -3, 'Угроза·Империя': 2, 'Устои': -1 }, remove: [], demand: [] }, day, delayActor, 'долг Империи не признан');
+    }
     for (const rc of parsed.recurring) {
+        // Постоянная статья не больше правдоподобной доли месячного дохода короны.
+        const lim = (rc.g > 0 ? RECUR_IN : RECUR_OUT) * E.revenueYear / E.monthsYear;
+        if (Math.abs(rc.g) > lim) { logEco(eco, day, `урезано: ежемесячно ${fmtG(rc.g)} — ${rc.note} → ${fmtG(Math.sign(rc.g) * lim)}`); notes.push('урезано'); rc.g = Math.sign(rc.g) * lim; }
         if (rc.g === 0) delete eco.recurring[rc.note]; else eco.recurring[rc.note] = rc.g;
         logEco(eco, day, `ежемесячно ${fmtG(rc.g)} — ${rc.note}`);
     }
     if (parsed.armyPay && eco.arrears > 0) {
         const pay = Math.min(eco.arrears, Math.max(0, eco.cash + E.credit));
         if (pay > 0) {
+            const share = pay / eco.arrears;
             eco.cash -= pay; eco.arrears -= pay;
             const months = Math.max(1, Math.round(pay / armyMonth()));
-            applyEffects(world, { deltas: { 'Достаток·войско': Math.min(3, months) }, remove: [], demand: [] }, day, delayActor, 'долг войску выплачен');
+            const back = Math.round((eco.arrearsHit || 0) * share);      // обида за «долг не возвращён» — в меру выплаченного
+            eco.arrearsHit = (eco.arrearsHit || 0) - back;
+            applyEffects(world, { deltas: { 'Достаток·войско': Math.min(3, months) + back }, remove: [], demand: [] }, day, delayActor, 'долг войску выплачен');
             logEco(eco, day, `выплачено задержанное жалованье ${fmtG(pay)}`);
         }
     }
@@ -179,6 +229,8 @@ export function applyEconomy(world, parsed, day, fallback = null, delayActor = (
         const t =E.templates[spec.kind][Math.max(0, E.sizes.indexOf(spec.size))];
         const lag = Math.min(...spec.markets.map(marketLag));
         const e = { name: spec.name, kind: spec.kind, size: spec.size, markets: spec.markets, open: true, started: day, sold: 0, profit: 0 };
+        const cost = t.capital || t.setup;
+        if (eco.cash - cost < -E.credit) { logEco(eco, day, `дело «${spec.name}» не заведено: нет ${fmtG(cost)} даже в долг`); notes.push('урезано'); continue; }
         if (t.capital) {
             e.capital = t.capital; e.tripDays = 2 * lag; e.readyDay = day; e.firstSaleDay = day + e.tripDays; e.tripEnd = e.firstSaleDay;
             eco.cash -= t.capital;
@@ -198,6 +250,20 @@ export function applyEconomy(world, parsed, day, fallback = null, delayActor = (
         for (const t of fallback.temp || []) { eco.cash += t.points * per; eco.scheduled.push({ at: day + t.days, g: -t.points * per, note: 'прошло: ' + t.note }); }
     }
     return notes;
+}
+
+// Подарки и траты в жестах идут из казны — как любые траты, не больше, чем дадут казна и банкиры.
+export function chargeGifts(world, gestures, day) {
+    const eco = world.eco;
+    if (!eco) return 0;
+    let total = 0;
+    for (const g of gestures || []) {
+        if (!(g.g > 0)) continue;
+        const paid = spend(eco, day, g.g, `подарок (${g.id})`, []);
+        total += paid;
+        logEco(eco, day, `${fmtG(-paid)} — ${g.type}${g.sub ? ' (' + g.sub + ')' : ''}: ${g.id}`);
+    }
+    return total;
 }
 
 // Спрос рынка на дела короны: враждебный сосед не покупает, выгода от Эльфридена его расширяет.
@@ -221,13 +287,21 @@ export function stepEconomy(world, day, delayActor) {
     const rec = Object.values(eco.recurring).reduce((s, g) => s + g, 0);
     eco.cash += (inc - otherMonth() + rec) / MONTH;
     if (eco.cash < 0) eco.cash -= -eco.cash * L.interestMonth / MONTH;
+    if (eco.loan > 0) eco.cash -= eco.loan * L.interestMonth / MONTH;      // проценты банкирам по займам
     // Армия получает раз в месяц; если казна пуста сверх займов — жалованье задерживают, и войско это помнит.
     if ((day - eco.start) % MONTH === 0) {
+        const oldDebt = eco.arrears >= armyMonth() / 2;
         if (eco.cash - armyMonth() < -E.credit) {
             eco.arrears += armyMonth();
             applyEffects(world, { deltas: { 'Достаток·войско': -1 }, remove: [], demand: [] }, day, delayActor, 'казна пуста — жалованье войску задержано');
             logEco(eco, day, `казна пуста сверх займов — жалованье войску задержано (${fmtG(armyMonth())})`);
         } else eco.cash -= armyMonth();
+        // Старый долг жалованья: пока не вернули, каждый месяц — ещё обида (не глубже ARREARS_HIT_MAX), при выплате вернётся.
+        if (oldDebt && (eco.arrearsHit || 0) < Math.min(ARREARS_HIT_MAX, Math.ceil(eco.arrears / armyMonth()))) {   // месяц долга — не больше удара на месяц
+            eco.arrearsHit = (eco.arrearsHit || 0) + 1;
+            applyEffects(world, { deltas: { 'Достаток·войско': -1 }, remove: [], demand: [] }, day, delayActor, 'долг жалованья не возвращён');
+            logEco(eco, day, `долг жалованья войску ${fmtG(eco.arrears)} не возвращён — войско помнит`);
+        }
     }
     // Дела короны.
     const serving = {};
@@ -244,6 +318,11 @@ export function stepEconomy(world, day, delayActor) {
                 eco.cash += net;               // капитал вернулся с прибылью (или меньше, если сбыт узок)
                 e.sold += sold; e.profit += net - t.capital;
                 logEco(eco, day, `рейс «${e.name}» вернулся: выручка ${fmtG(sold)}, чистыми ${fmtG(net - t.capital)}`);
+                // Купец не возит в убыток вечно и не закупает товар на деньги, которых нет.
+                e.losses = net < t.capital ? (e.losses || 0) + 1 : 0;
+                if (e.losses >= TRADE_LOSSES_STOP) { e.open = false; logEco(eco, day, `дело «${e.name}» встало: ${e.losses} рейса подряд в убыток, товар не расходится`); continue; }
+                if (eco.cash - t.capital < -E.credit) { e.tripEnd = day + MONTH; if (!e.waiting) logEco(eco, day, `дело «${e.name}» ждёт: нет денег на товар`); e.waiting = true; continue; }
+                e.waiting = false;
                 eco.cash -= t.capital;         // новый рейс
                 e.tripEnd = day + e.tripDays;
             }
@@ -292,8 +371,8 @@ export function ecoSummary(world, fmtDate, full = true) {
     const eco = world.eco;
     if (!eco) return '';
     const rec = Object.values(eco.recurring).reduce((s, g) => s + g, 0);
-    const runway = (eco.cash - eco.debt - eco.arrears) / spendMonth();
-    const lines = [`Казна: ${fmtG(eco.cash)}${eco.cash < 0 ? ' (в долг у банкиров)' : ''} · сокровищница ${fmtG(eco.hoard)} · долг Империи ${fmtG(eco.debt)} · задержано жалованья войску ${fmtG(eco.arrears)} · запас ~${runway.toFixed(1).replace('.', ',')} мес. расходов`];
+    const runway = (eco.cash - eco.debt - eco.arrears - (eco.loan || 0)) / spendMonth();
+    const lines = [`Казна: ${fmtG(eco.cash)}${eco.cash < 0 ? ' (в долг у банкиров)' : ''} · сокровищница ${fmtG(eco.hoard)} · долг Империи ${fmtG(eco.debt)}${eco.loan > 0 ? ` · займы у банкиров ${fmtG(eco.loan)}` : ''} · задержано жалованья войску ${fmtG(eco.arrears)} · запас ~${runway.toFixed(1).replace('.', ',')} мес. расходов`];
     if (full) lines.push(`В месяц: подати ${fmtG(eco.lastIncome)} · армия ${fmtG(armyMonth())} · двор и управление ${fmtG(otherMonth())}${rec ? ` · постоянные статьи ${fmtG(rec)} (${Object.entries(eco.recurring).map(([n, g]) => `${n}: ${fmtG(g)}`).join('; ')})` : ''} · займы до ${fmtG(E.credit)}`);
     for (const e of eco.ent.filter(x => x.open)) {
         const state = world.lastDay < e.firstSaleDay

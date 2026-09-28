@@ -68,6 +68,16 @@ export function applyBatch(world, text, day, delays, note = '') {
     return { unknownAxes: parsed.unknown, unknownEco: eco.unknown, unknownPeople: people.unknown, errors, resourcesWritten: notes.includes('Ресурсы') || (fallback && (fallback.later.length || fallback.temp.length) > 0) };
 }
 
+// Зафиксировать пачку эффектов в день `day` — один и тот же порядок для игры и для пересчёта колодца:
+// сначала прожить дни до решения, потом решение, потом сам день. Так пересчёт журнала даёт тот же мир.
+export function commitBatch(world, text, day, delays, note = '') {
+    const d = Math.max(day, world.lastDay);
+    if (d - 1 > world.lastDay) advanceWorld(world, d - 1, delays);
+    const r = applyBatch(world, text, d, delays, note);
+    advanceWorld(world, d, delays);
+    return r;
+}
+
 // Продвинуть весь мир до дня `toDay`, день за днём.
 export function advanceWorld(world, toDay, delays) {
     for (let d = world.lastDay + 1; d <= toDay; d++) {

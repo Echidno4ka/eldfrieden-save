@@ -173,10 +173,25 @@ function delayOf(actor) {
     const to = MERA.places.find(p => p.id === actor.seat) || from;
     return Math.ceil(kmBetween(from, to) / COURIER) + 1;
 }
+// Игра начинается с получения власти: отречение Альберта — первое событие мира, вести о нём расходятся с гонцами.
+const OPENING_DAY = abs(1546, 4, 32);
+const OPENING_EFFECTS = [
+    'отречение в пользу чужака без обряда и совета пэров: Устои −3',
+    'помолвка с наследницей и публичное одобрение Альберта: Устои +1',
+    'НА 32: смена власти, чиновники не знают, чьих приказов держаться: Власть −1',
+    'призванный стал правителем, а не выдан Империи: Угроза·Империя +1',
+].join('\n');
+function freshWorld() {
+    const w = initWorld(SUMMON_DAY);
+    advance(w, OPENING_DAY - 1);
+    applyEffects(w, parseEffects(OPENING_EFFECTS), OPENING_DAY, delayOf, 'отречение Альберта и помолвка с Лисией');
+    advance(w, OPENING_DAY);
+    return w;
+}
 function worldOf(d) {
     if (!d.world) {
-        d.world = initWorld(SUMMON_DAY);
-        advance(d.world, parseDate(d.text) ?? SUMMON_DAY);
+        d.world = freshWorld();
+        advance(d.world, parseDate(d.text) ?? OPENING_DAY);
     }
     return d.world;
 }
@@ -493,12 +508,12 @@ async function undo() {
 async function reset() {
     if (!isOurChat()) return;
     const c = ctx();
-    const ok = await c.callGenericPopup('<h3>Сбросить Летопись?</h3><p>Состояние вернётся к моменту призыва. Используйте только для новой игры.</p>', c.POPUP_TYPE.CONFIRM, '', { okButton: 'Сбросить', cancelButton: 'Отмена' });
+    const ok = await c.callGenericPopup('<h3>Сбросить Летопись?</h3><p>Состояние вернётся к моменту получения власти. Используйте только для новой игры.</p>', c.POPUP_TYPE.CONFIRM, '', { okButton: 'Сбросить', cancelButton: 'Отмена' });
     if (ok !== c.POPUP_RESULT.AFFIRMATIVE) return;
-    c.chatMetadata[MODULE] = { text: INITIAL_STATE, turns: 0, lastIndex: c.chat.length - 1, updatedAt: null, history: [], world: initWorld(SUMMON_DAY) };
+    c.chatMetadata[MODULE] = { text: INITIAL_STATE, turns: 0, lastIndex: c.chat.length - 1, updatedAt: null, history: [], world: freshWorld() };
     await save();
     inject();
-    toastr.success('Летопись сброшена к моменту призыва.');
+    toastr.success('Летопись сброшена к моменту получения власти.');
 }
 
 function snapshot(d) {
@@ -593,7 +608,7 @@ function addCommands() {
     cmd('chronicle-update', () => update({ manual: true }), 'Обновить Летопись сейчас.');
     cmd('chronicle-edit', edit, 'Править Летопись вручную.');
     cmd('chronicle-undo', undo, 'Откатить Летопись на предыдущую версию.');
-    cmd('chronicle-reset', reset, 'Сбросить Летопись к моменту призыва (новая игра).');
+    cmd('chronicle-reset', reset, 'Сбросить Летопись к моменту получения власти (новая игра).');
 }
 
 jQuery(() => {

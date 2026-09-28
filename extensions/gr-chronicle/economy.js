@@ -3,7 +3,7 @@
 // а ось «Ресурсы» в «Реакции мира» выводит из остатка казны.
 import { MERA } from './mera.data.js';
 import { REACTION } from './reaction.data.js';
-import { applyEffects } from './reaction.js';
+import { applyEffects, repute, REP } from './reaction.js';
 
 const E = MERA.economy, L = E.ledger;
 const MONTH = 32;
@@ -134,7 +134,10 @@ const HOARD_PROCEEDS = /сокровищ|ценност|драгоцен|рас�
 // Правдоподобие сумм (доли годового дохода короны из «Меры»): модель не может напечатать деньги или разорить корону одной строкой.
 const ONE_OFF_FREE = 0.05;      // разовый доход без названного источника — не больше
 const ONE_OFF_SOURCED = 0.5;    // с источником (конфискация, продажа, пошлины…) — не больше
-const LOAN_MAX = 0.5;           // долг банкирам всего — не больше
+// Банкиры верят Слову {{user}}: предел займов (доля годового дохода) и процент в месяц — по «Репутации·Слово».
+const lerp3 = (pts, x) => { const t = clamp(x, -5, 5) / 5; return t < 0 ? pts[1] + (pts[1] - pts[0]) * t : pts[1] + (pts[2] - pts[1]) * t; };
+export const loanLimit = world => lerp3(REACTION.reputation.loanLimit, world.axes[REP + 'Слово'] ?? 0) * E.revenueYear;
+export const loanRate = world => lerp3(REACTION.reputation.loanRate, world.axes[REP + 'Слово'] ?? 0);
 const RECUR_IN = 0.2, RECUR_OUT = 0.3;   // постоянная статья — доля месячного дохода
 const INCOME_SOURCE = /конфиск|изъят|прода|выкуп|трофе|контрибуц|пошлин|налог|подат|сбор|пожертв|откуп|аренд|выручк|доход с|рейс/i;
 const LOAN = /за[её]м|займ|кредит|в долг у|банкир|менял/i;
@@ -165,9 +168,9 @@ export function applyEconomy(world, parsed, day, fallback = null, delayActor = (
         if (c.g > 0 && eco.lastHoardDay != null && HOARD_PROCEEDS.test(c.note)) { logEco(eco, day, `повтор не учтён: ${fmtG(c.g)} — ${c.note} (выручка сокровищницы уже зачислена)`); notes.push('повтор'); continue; }
         // Заём у банкиров — не подарок: долг с процентами, не больше предела доверия банкиров.
         if (c.g > 0 && LOAN.test(c.note)) {
-            const g = Math.min(c.g, Math.max(0, LOAN_MAX * E.revenueYear - (eco.loan || 0)));
+            const g = Math.min(c.g, Math.max(0, loanLimit(world) - (eco.loan || 0)));
             eco.loan = (eco.loan || 0) + g; eco.cash += g;
-            logEco(eco, day, g < c.g ? `заём ${fmtG(g)} из ${fmtG(c.g)} — ${c.note} (больше банкиры не дают)` : `заём ${fmtG(g)} — ${c.note} (${Math.round(L.interestMonth * 100)}% в месяц)`);
+            logEco(eco, day, g < c.g ? `заём ${fmtG(g)} из ${fmtG(c.g)} — ${c.note} (больше банкиры не дают: таково слово короны)` : `заём ${fmtG(g)} — ${c.note} (${(loanRate(world) * 100).toFixed(1).replace('.', ',')}% в месяц)`);
             if (g < c.g) notes.push('урезано');
             continue;
         }
@@ -190,7 +193,9 @@ export function applyEconomy(world, parsed, day, fallback = null, delayActor = (
     for (const d of parsed.debt) {
         if (LOAN.test(d.note) && eco.loan > 0) {            // вернуть банкирам
             const g = spend(eco, day, Math.min(d.g, eco.loan), d.note, notes);
-            eco.loan -= g; logEco(eco, day, `возвращено банкирам ${fmtG(g)}`); continue;
+            eco.loan -= g; logEco(eco, day, `возвращено банкирам ${fmtG(g)}`);
+            if (g > 0) repute(world, { 'Слово': 1 }, day, delayActor, 'вернул заём банкирам');
+            continue;
         }
         const g = spend(eco, day, Math.min(d.g, eco.debt), d.note || 'дань Империи', notes);
         eco.debt -= g;
@@ -198,6 +203,7 @@ export function applyEconomy(world, parsed, day, fallback = null, delayActor = (
     }
     if (parsed.repudiate && eco.debt > 0) {
         logEco(eco, day, `долг Империи ${fmtG(eco.debt)} не признан`);
+        repute(world, { 'Слово': -3 }, day, delayActor, 'корона отказалась платить долг');
         eco.debt = 0;
         applyEffects(world, { deltas: { 'Выгода·Империя': -3, 'Угроза·Империя': 2, 'Устои': -1 }, remove: [], demand: [] }, day, delayActor, 'долг Империи не признан');
     }
@@ -286,14 +292,16 @@ export function stepEconomy(world, day, delayActor) {
     eco.lastIncome = inc;
     const rec = Object.values(eco.recurring).reduce((s, g) => s + g, 0);
     eco.cash += (inc - otherMonth() + rec) / MONTH;
-    if (eco.cash < 0) eco.cash -= -eco.cash * L.interestMonth / MONTH;
-    if (eco.loan > 0) eco.cash -= eco.loan * L.interestMonth / MONTH;      // проценты банкирам по займам
+    const rate = loanRate(world);                                        // процент — по Слову короны
+    if (eco.cash < 0) eco.cash -= -eco.cash * rate / MONTH;
+    if (eco.loan > 0) eco.cash -= eco.loan * rate / MONTH;               // проценты банкирам по займам
     // Армия получает раз в месяц; если казна пуста сверх займов — жалованье задерживают, и войско это помнит.
     if ((day - eco.start) % MONTH === 0) {
         const oldDebt = eco.arrears >= armyMonth() / 2;
         if (eco.cash - armyMonth() < -E.credit) {
             eco.arrears += armyMonth();
             applyEffects(world, { deltas: { 'Достаток·войско': -1 }, remove: [], demand: [] }, day, delayActor, 'казна пуста — жалованье войску задержано');
+            repute(world, { 'Слово': -1 }, day, delayActor, 'корона не заплатила войску');
             logEco(eco, day, `казна пуста сверх займов — жалованье войску задержано (${fmtG(armyMonth())})`);
         } else eco.cash -= armyMonth();
         // Старый долг жалованья: пока не вернули, каждый месяц — ещё обида (не глубже ARREARS_HIT_MAX), при выплате вернётся.
@@ -372,7 +380,8 @@ export function ecoSummary(world, fmtDate, full = true) {
     if (!eco) return '';
     const rec = Object.values(eco.recurring).reduce((s, g) => s + g, 0);
     const runway = (eco.cash - eco.debt - eco.arrears - (eco.loan || 0)) / spendMonth();
-    const lines = [`Казна: ${fmtG(eco.cash)}${eco.cash < 0 ? ' (в долг у банкиров)' : ''} · сокровищница ${fmtG(eco.hoard)} · долг Империи ${fmtG(eco.debt)}${eco.loan > 0 ? ` · займы у банкиров ${fmtG(eco.loan)}` : ''} · задержано жалованья войску ${fmtG(eco.arrears)} · запас ~${runway.toFixed(1).replace('.', ',')} мес. расходов`];
+    const lines = [`Казна: ${fmtG(eco.cash)}${eco.cash < 0 ? ' (в долг у банкиров)' : ''} · сокровищница ${fmtG(eco.hoard)} · долг Империи ${fmtG(eco.debt)}${eco.loan > 0 ? ` · займы у банкиров ${fmtG(eco.loan)}` : ''} · задержано жалованья войску ${fmtG(eco.arrears)} · запас ~${runway.toFixed(1).replace('.', ',')} мес. расходов`,
+        `Банкиры (по Слову короны): дадут ещё до ${fmtG(Math.max(0, loanLimit(world) - (eco.loan || 0)))} под ${(loanRate(world) * 100).toFixed(1).replace('.', ',')}% в месяц`];
     if (full) lines.push(`В месяц: подати ${fmtG(eco.lastIncome)} · армия ${fmtG(armyMonth())} · двор и управление ${fmtG(otherMonth())}${rec ? ` · постоянные статьи ${fmtG(rec)} (${Object.entries(eco.recurring).map(([n, g]) => `${n}: ${fmtG(g)}`).join('; ')})` : ''} · займы до ${fmtG(E.credit)}`);
     for (const e of eco.ent.filter(x => x.open)) {
         const state = world.lastDay < e.firstSaleDay

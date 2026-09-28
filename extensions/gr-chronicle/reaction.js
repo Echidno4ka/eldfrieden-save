@@ -24,8 +24,21 @@ export function attitude(world, a) {
         const b = R.actors.find(x => x.id === id);
         if (b && !b.follows && !world.removed.includes(id)) f += k * Math.min(0, attitude(world, b));
     }
+    // Репутация {{user}}: как о нём говорят — в той мере, в какой это важно актору (весть дошла с гонцом).
+    let r = 0;
+    for (const [facet, k] of Object.entries(R.reputation?.actors?.[a.id] || {})) r += k * (axes[REP + facet] ?? 0);
     // world.personal — личное доверие к {{user}} (для герцогов, из «Отношений»); grievance — застарелая нужда.
-    return a.base + 2 * s / weightSum(a) + f + (world.memory[a.id] || 0) + (world.grievance?.[a.id] || 0) + (world.personal?.[a.id] || 0);
+    return a.base + 2 * s / weightSum(a) + f + r + (world.memory[a.id] || 0) + (world.grievance?.[a.id] || 0) + (world.personal?.[a.id] || 0);
+}
+
+export const REP = 'Репутация·';
+// Разнести слух о {{user}}: треть — навсегда, остальное — свежий слух, остынет через fresh дней. Весть идёт с гонцами.
+export function repute(world, deltas, day, delayOf, note = '') {
+    const keep = R.reputation.keep, fresh = R.reputation.fresh;
+    const perm = {}, temp = {};
+    for (const [facet, v] of Object.entries(deltas)) { if (!v) continue; perm[REP + facet] = v * keep; temp[REP + facet] = v * (1 - keep); }
+    if (!Object.keys(perm).length) return world;
+    return applyEffects(world, { deltas: perm, temp: [{ days: fresh, deltas: temp, note: 'слух остывает: ' + note }], remove: [], demand: [] }, day, delayOf, note);
 }
 
 function targetStage(att) {
@@ -183,9 +196,15 @@ export function advance(world, toDay) {
             // Ответ на прямое требование — без выдержки, но не выше разрыва: на войну нужны сборы.
             const prov = world.provoked[a.id] && day >= world.provoked[a.id] && st.s + 1 <= T.provokeMaxStage;
             if (target > st.s && (day - st.since >= upDays(a, st) || prov) && !seasonBlock) {
-                st.s += 1; st.since = day; if (prov) delete world.provoked[a.id];
+                st.s += 1; st.since = day;
+                // Отказ на прямое требование — все видят, что приказ {{user}} можно не исполнить.
+                if (prov) { delete world.provoked[a.id]; (world.repEvents = world.repEvents || []).push({ day, deltas: { 'Сила': -1 }, note: `${a.name}: отказ на требование` }); }
             } else {
-                if (prov && target <= st.s) delete world.provoked[a.id]; // подчинился
+                if (prov && target <= st.s) {
+                    delete world.provoked[a.id];
+                    // подчинился недовольный — слух о твёрдости {{user}}; послушание верного ничего не доказывает
+                    if (st.s >= 1) (world.repEvents = world.repEvents || []).push({ day, deltas: { 'Сила': 1 }, note: `подчинение требованию: ${a.name}` });
+                }
                 // Остыть — только отойдя от порога с запасом (без дрожания на границе).
                 if (targetStage(att - T.hysteresis) < st.s && day - st.since >= down) { st.s -= 1; st.since = day; }
             }

@@ -4,7 +4,7 @@
 import { PEOPLE } from './people.data.js';
 import { REACTION } from './reaction.data.js';
 import { MERA } from './mera.data.js';
-import { advance, attitude } from './reaction.js';
+import { advance, attitude, REP } from './reaction.js';
 
 const T = PEOPLE.tempo, G = PEOPLE.gestures;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -74,10 +74,25 @@ function sourceTrust(world, id) {
     return clamp(ownTrust(world, id), -T.levelMax, T.levelMax);
 }
 
+// Характер персонажа (старые данные без него — обычный человек; «гордый» — злопамятен).
+const TP = p => p.temper || { attention: 1, trusting: 1, sensitive: 1, grudge: p.proud ? 2 : 1, rep: {} };
+const bandIdx = s => clamp(s, -3, 3) + 3;
+// Что персонаж слышал о {{user}} — взвешено по тем граням, что важны ему (весть дошла с его задержкой).
+export function repOf(world, id) {
+    const p = byId[id], st = world.people[id];
+    let r = 0;
+    for (const [f, k] of Object.entries(TP(p).rep || {})) r += k * (st.seen[REP + f] || 0);
+    return r;
+}
+// Добрые жесты и события от человека с доброй славой весят больше (±5 → ±40%).
+const repMult = (world, id) => clamp(1 + (T.repMult ?? 0) * repOf(world, id), T.repMultMin ?? 1, T.repMultMax ?? 1);
+
 export function value(world, id, dim) {
     const p = byId[id], st = world.people[id];
     if (dim === 'like' || dim === 'love') return p.romance || dim === 'like' ? clamp(st.level[dim] + st.mem[dim], -T.levelMax, T.levelMax) : 0;
     let v = ownTrust(world, id);
+    // Слава {{user}}: знакомые судят больше по делам, незнакомые — только по слухам.
+    v += (st.met ? (T.repTrustMet ?? 0) : (T.repTrustStranger ?? 0)) * repOf(world, id);
     for (const [src, k] of Object.entries(p.ties || {})) v += k * sourceTrust(world, src);
     if (p.actor) {
         // Дело герцога — его ступень в «Реакции мира» (там уже учтено личное доверие); здесь — для показа.
@@ -179,12 +194,17 @@ export function applyPeople(world, parsed, day, demand = [], delayOf = () => 1) 
         const st = world.people[e.id];
         if (!st) continue;
         st.lastEv = st.lastEv || {};
+        const tp = TP(byId[e.id]), bT = bandIdx(st.band.trust.s), rm = repMult(world, e.id);
         for (const k of ['trust', 'like', 'love']) {
             if (!e[k] || (k === 'love' && !byId[e.id].romance)) continue;
             // Зло помнится сильнее добра: тяжкая обида (−3: предал, унизил при всех) весит больше трёх мелочей,
             // а обида снова в течение месяца — уже курс, а не случай. Добрые дела — линейно.
+            // Характер и нынешнее отношение: доверчивость и подозрительность врага — к добру; ранимость и близость — к обиде.
             const prev = st.lastEv[k];
-            const f = e[k] >= 0 ? 1 : (e[k] <= -3 ? (T.graveFactor ?? 1) : 1) * (prev && prev.v < 0 && day - prev.day <= (T.repeatWindow ?? 0) ? (T.repeatFactor ?? 1) : 1);
+            const f = e[k] >= 0
+                ? rm * (k === 'trust' ? tp.trusting * (T.goodByTrust?.[bT] ?? 1) : 1)
+                : (e[k] <= -3 ? (T.graveFactor ?? 1) : 1) * (prev && prev.v < 0 && day - prev.day <= (T.repeatWindow ?? 0) ? (T.repeatFactor ?? 1) : 1)
+                  * tp.sensitive * (T.hurtByTrust?.[bT] ?? 1);
             put(st, k, e[k] * f, 1);
             st.lastEv[k] = { day, v: e[k] };
         }
@@ -200,7 +220,12 @@ export function applyPeople(world, parsed, day, demand = [], delayOf = () => 1) 
         st.gestures = (st.gestures || []).filter(x => day - x.day < G.habitWindow);
         const habit = Math.pow(G.habitMult, st.gestures.filter(x => x.type === gst.type).length);
         st.gestures.push({ day, type: gst.type });
-        const [lk, tr, lv] = gestureWeight(world, p, gst).map(v => v * habit);
+        let [lk, tr, lv] = gestureWeight(world, p, gst).map(v => v * habit);
+        // Характер и нынешнее отношение: чуткость × «как звучит от этого человека сейчас» × слава {{user}}; дурное — по ранимости.
+        const tp = TP(p), aL = T.attentionByLike?.[bandIdx(st.band.like.s)] ?? 1, gT = T.goodByTrust?.[bandIdx(st.band.trust.s)] ?? 1, rm = repMult(world, p.id);
+        lk = lk > 0 ? lk * tp.attention * aL * rm : lk * tp.sensitive;
+        lv = lv > 0 ? lv * tp.attention * aL * rm : lv * tp.sensitive;
+        tr = tr > 0 ? tr * tp.attention * tp.trusting * gT * rm : tr * tp.sensitive;
         const b = batch[gst.id] = batch[gst.id] || { like: 0, trust: 0, love: 0 };
         const cap = (k, v) => { const nv = clamp(b[k] + v, -G.batchCap, G.batchCap); const d = nv - b[k]; b[k] = nv; return d; };
         const dl = cap('like', lk), dt = cap('trust', tr), dv = cap('love', lv);
@@ -249,7 +274,9 @@ export function stepPeople(world, day, delayOf) {
             st.cursor++;
         }
         for (const k of ['trust', 'like', 'love']) {
-            const hl = (k === 'trust' ? T.halfLifeTrust : k === 'like' ? T.halfLifeLike : T.halfLifeLove) * (p.proud ? T.proudFactor : 1);
+            // Свежая обида держится по злопамятности и отношению (друг прощает быстрее, враг копит); добро остывает обычно.
+            const base = k === 'trust' ? T.halfLifeTrust : k === 'like' ? T.halfLifeLike : T.halfLifeLove;
+            const hl = st.mem[k] < 0 ? base * TP(p).grudge * (T.grudgeByBand?.[bandIdx(st.band[k].s)] ?? 1) : base;
             st.mem[k] *= Math.pow(0.5, 1 / hl);
         }
     }

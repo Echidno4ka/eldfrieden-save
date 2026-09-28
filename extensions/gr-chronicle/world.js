@@ -1,13 +1,15 @@
 // Единый порядок мира: разбор раздела ЭФФЕКТЫ по трём модулям и шаг дня.
 //   страна («Реакция мира») → казна («Хозяйство») → люди («Отношения»).
 // Им пользуются и Летопись, и проверки — один путь для игры и для тестов.
-import { parseEffects, applyEffects, advance } from './reaction.js';
+import { parseEffects, applyEffects, advance, repute } from './reaction.js';
 import { PEOPLE } from './people.data.js';
 import { initPeople, parsePeople, applyPeople, stepPeople, findId } from './people.js';
 import { initEconomy, parseEconomy, applyEconomy, stepEconomy, chargeGifts } from './economy.js';
 
 export const PEOPLE_LINE = /Доверие|Приязнь|Влечение|ЗНАКОМСТВО|^\s*ЖЕСТ:/;
 // (\b с кириллицей в JS не работает — граница задаётся явно)
+// «РЕПУТАЦИЯ: Слово +1; Честь −2 — причина» — что о {{user}} говорят (не путать с осью «Сила»).
+export const REP_LINE = /^\s*РЕПУТАЦИЯ\s*:/i;
 export const ECO_LINE = /^\s*(КАЗНА|СОКРОВИЩНИЦА|ЕЖЕМЕСЯЧНО|ДОЛГ ВОЙСКУ|ДОЛГ|ДЕЛО ЗАКРЫТЬ|ДЕЛО)\s*:/;
 
 export function initAll(world, day) {
@@ -59,11 +61,19 @@ const normEco = l => {
 export function applyBatch(world, text, day, delays, note = '') {
     // «…: Порядок +1; ЧЕРЕЗ 8: …» в одной строке (так пишет DeepSeek) — отложенное с новой строки.
     const lines = String(text).split('\n').flatMap(l => l.split(/;\s*(?=(?:ЧЕРЕЗ|НА)\s+\d+\s*:)/)).map(normEco);
-    const peopleText = lines.filter(l => PEOPLE_LINE.test(l)).join('\n');
-    const ecoText = lines.filter(l => ECO_LINE.test(l)).join('\n');
+    const repLines = lines.filter(l => REP_LINE.test(l));
+    const rest = lines.filter(l => !REP_LINE.test(l));
+    const peopleText = rest.filter(l => PEOPLE_LINE.test(l)).join('\n');
+    const ecoText = rest.filter(l => ECO_LINE.test(l)).join('\n');
     // Денежная строка с показателями в хвосте («СОКРОВИЩНИЦА: продать треть — …: Порядок +1») идёт и в хозяйство, и в показатели.
     const hasAxes = l => [...l.matchAll(/([А-ЯЁ][а-яё]+(?:·[А-ЯЁа-яё]+)?)\s*[+−-]\s*\d/g)].some(m => m[1] in world.axes);
-    const countryText = lines.filter(l => !PEOPLE_LINE.test(l) && (!ECO_LINE.test(l) || hasAxes(l))).join('\n');
+    const countryText = rest.filter(l => !PEOPLE_LINE.test(l) && (!ECO_LINE.test(l) || hasAxes(l))).join('\n');
+    for (const l of repLines) {
+        const deltas = {};
+        for (const m of l.matchAll(/(Слово|Сила|Честь|Милость)\s*([+−–\-])\s*(\d+(?:[.,]\d+)?)/g))
+            deltas[m[1]] = (deltas[m[1]] || 0) + (m[2] === '+' ? 1 : -1) * Math.min(3, parseFloat(m[3].replace(',', '.')));
+        repute(world, deltas, day, delays.actor, (l.split(/\s[—–-]\s/).slice(1).join(' — ') || 'молва').trim().slice(0, 120));
+    }
     const parsed = parseEffects(countryText);
     const demandNames = parsed.demand.slice();
     parsed.demand = demandActors(parsed.demand);
@@ -93,6 +103,8 @@ export function commitBatch(world, text, day, delays, note = '') {
 export function advanceWorld(world, toDay, delays) {
     for (let d = world.lastDay + 1; d <= toDay; d++) {
         advance(world, d);
+        // Исходы требований (подчинились или отказали) расходятся слухом о Силе {{user}}.
+        if (world.repEvents?.length) { const ev = world.repEvents; world.repEvents = []; for (const e of ev) repute(world, e.deltas, e.day, delays.actor, e.note); }
         if (world.eco) stepEconomy(world, d, delays.actor);
         if (world.people) stepPeople(world, d, delays.person);
     }

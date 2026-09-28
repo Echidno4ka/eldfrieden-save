@@ -5,6 +5,8 @@ import { INITIAL_STATE } from './initial.js';
 import { MERA } from './mera.data.js';
 import { REACTION } from './reaction.data.js';
 import { initWorld, parseEffects, applyEffects, advance, summary, cloneWorld } from './reaction.js';
+import { PEOPLE } from './people.data.js';
+import { initPeople, parsePeople, applyPeople, advanceAll, peopleSummary, findId } from './people.js';
 
 const MODULE = 'gr_chronicle';
 const NARRATOR = 'Хроники Эльфридена';
@@ -181,18 +183,50 @@ const OPENING_EFFECTS = [
     'НА 32: смена власти, чиновники не знают, чьих приказов держаться: Власть −1',
     'призванный стал правителем, а не выдан Империи: Угроза·Империя +1',
 ].join('\n');
+// ---- «Отношения»: где персонаж сейчас (по досье Летописи) — туда и идут вести ----
+function personSeat(text, p) {
+    const lines = section(String(text), 'ДОСЬЕ').split('\n');
+    const i = lines.findIndex(l => !/^\s/.test(l) && p.aliases.some(a => l.toUpperCase().startsWith(a.toUpperCase())));
+    if (i < 0) return p.seat;
+    const where = lines.slice(i, i + 4).find(l => /Где:/.test(l)) || '';
+    const low = where.toLowerCase();
+    const place = MERA.places.find(pl => [pl.name, ...pl.aliases].some(a => a && low.includes(a.toLowerCase())));
+    return place ? place.id : p.seat;
+}
+function personDelay(text) {
+    const cache = {};
+    return id => {
+        if (cache[id] == null) {
+            const p = PEOPLE.people.find(x => x.id === id);
+            cache[id] = delayOf({ seat: personSeat(text, p) });
+        }
+        return cache[id];
+    };
+}
+// Строки персонажей («Лисия: Доверие −2») и знакомства разбирает «Отношения», остальное — «Реакция мира».
+const PEOPLE_LINE = /Доверие|Приязнь|ЗНАКОМСТВО/;
+function countryLines(text) { return String(text).split('\n').filter(l => !PEOPLE_LINE.test(l)).join('\n'); }
+// ТРЕБОВАНИЕ «Кастор» — это требование герцогу Варгасу в «Реакции мира».
+function demandActors(names) {
+    return names.map(n => { const id = findId(n); const p = id && PEOPLE.people.find(x => x.id === id); return p?.actor || n; });
+}
+function peopleText(world) { return peopleSummary(world, fmt); }
+
 function freshWorld() {
     const w = initWorld(SUMMON_DAY);
     advance(w, OPENING_DAY - 1);
     applyEffects(w, parseEffects(OPENING_EFFECTS), OPENING_DAY, delayOf, 'отречение Альберта и помолвка с Лисией');
     advance(w, OPENING_DAY);
+    initPeople(w, OPENING_DAY);
     return w;
 }
 function worldOf(d) {
     if (!d.world) {
         d.world = freshWorld();
-        advance(d.world, parseDate(d.text) ?? OPENING_DAY);
+        advanceAll(d.world, parseDate(d.text) ?? OPENING_DAY, personDelay(d.text));
     }
+    // Летопись старше «Отношений»: персонажи появляются с того дня, до которого дошёл мир.
+    if (!d.world.people) initPeople(d.world, d.world.lastDay);
     return d.world;
 }
 function stripEffects(text) {
@@ -297,7 +331,7 @@ function inject() {
         c.setExtensionPrompt(MODULE, '', 1, INJECT_DEPTH);
         return;
     }
-    const prompt = `[ЛЕТОПИСЬ — служебная сводка ведущего для рассказчика. Это истинное текущее состояние мира. Досье важнее стартовых карточек персонажей. Раздел ТАЙНОЕ знает только рассказчик: используй его для предвестий и действий за кадром, но не раскрывай напрямую. Никогда не цитируй и не упоминай Летопись в ответе. Не пересказывай ТАЙНОЕ и сводку устами персонажей: не больше одного предвестия за сцену, NPC не зачитывают списки угроз. Если Летопись расходится с картой ниже, верна карта. Летопись — фон, а не сценарий: всё из ЖУРНАЛА уже произошло и уже показано в чате. Не разыгрывай это заново, не повторяй цифры и доклады; продолжай сцену с последнего сообщения игрока.${data().stale ? ' Летопись сейчас может опережать чат (игрок удалил или переиграл сообщения): если она расходится с чатом, верен чат.' : ''}]\n${GEO}\n\n${timelineText(parseDate(data().text))}\nСобытия со статусом ЗАБЛОКИРОВАНО не происходят и не упоминаются как текущие. Раздел УСТАНОВЛЕНО — закреплённые факты игры: имена, места, суммы, цены; повторяй их точно.\n\n${sub(data().text)}\n\n${travelNote(data().text)}\n\n[РЕАКЦИЯ МИРА — посчитано кодом по показателям страны; тайное, персонажи знают только то, что видели сами. Сословия, герцоги и соседи ведут себя по своей текущей ступени: её проявления уместны в сцене и за кадром, но ничего выше текущей ступени не происходит. Смена ступени — дело недель и месяцев, не одной сцены.]\n${reactionText(worldOf(data()), false)}`;
+    const prompt = `[ЛЕТОПИСЬ — служебная сводка ведущего для рассказчика. Это истинное текущее состояние мира. Досье важнее стартовых карточек персонажей. Раздел ТАЙНОЕ знает только рассказчик: используй его для предвестий и действий за кадром, но не раскрывай напрямую. Никогда не цитируй и не упоминай Летопись в ответе. Не пересказывай ТАЙНОЕ и сводку устами персонажей: не больше одного предвестия за сцену, NPC не зачитывают списки угроз. Если Летопись расходится с картой ниже, верна карта. Летопись — фон, а не сценарий: всё из ЖУРНАЛА уже произошло и уже показано в чате. Не разыгрывай это заново, не повторяй цифры и доклады; продолжай сцену с последнего сообщения игрока.${data().stale ? ' Летопись сейчас может опережать чат (игрок удалил или переиграл сообщения): если она расходится с чатом, верен чат.' : ''}]\n${GEO}\n\n${timelineText(parseDate(data().text))}\nСобытия со статусом ЗАБЛОКИРОВАНО не происходят и не упоминаются как текущие. Раздел УСТАНОВЛЕНО — закреплённые факты игры: имена, места, суммы, цены; повторяй их точно.\n\n${sub(data().text)}\n\n${travelNote(data().text)}\n\n[РЕАКЦИЯ МИРА — посчитано кодом по показателям страны; тайное, персонажи знают только то, что видели сами. Сословия, герцоги и соседи ведут себя по своей текущей ступени: её проявления уместны в сцене и за кадром, но ничего выше текущей ступени не происходит. Смена ступени — дело недель и месяцев, не одной сцены.]\n${reactionText(worldOf(data()), false)}\n\n[ОТНОШЕНИЯ — посчитано кодом. «Дело» — насколько персонаж верит в правление {{user}} и как работает на {{user}} или против; «лично» — его чувства к {{user}}. Поступки персонажа следуют этим ступеням, а средства и манеру выбирай по его характеру, положению и возможностям из лорбука: кто-то действует открыто, кто-то тихо. Дело и лично могут расходиться. Ступень меняется за дни и недели; одна сцена сдвигает не больше чем на ступень. Незнакомые судят о {{user}} по слухам.]\n${peopleText(worldOf(data()))}`;
     c.setExtensionPrompt(MODULE, prompt, 1, INJECT_DEPTH, false, 0);
 }
 
@@ -352,8 +386,10 @@ WORLD STATE
   HIDDEN COST — for every decision write its side effects as separate lines, not only its purpose. Ask: who loses money, rank, work or face; who is passed over or made to do work beneath them; how it looks to the hungry, to soldiers, to priests; what it does to trade, prices and roads; what it causes in 1–3 months (depletion, black market, imitation, flight). Examples: noble soldiers set to dig sewers → Статус·войско −2; a feast or fried delicacies shown in a famine → Статус·чернь −1; everyone catches octopus at once → "ЧЕРЕЗ 96: отмели выбраны: Достаток·чернь −1"; half the officials purged → "НА 64: канцелярии пусты: Порядок −2".
   Use ONLY these indicators:
 ${AXES_HELP}
+- PEOPLE (section "ОТНОШЕНИЯ", computed by code): for the tracked characters add lines to === ЭФФЕКТЫ === whenever the batch touched them personally: "<name>: Доверие ±n; Приязнь ±n — <reason>". Доверие = do they believe in {{user}}'s rule (competence, fairness, respect for their office and people); Приязнь = personal feeling. They can move apart: a humiliated but competent ruler loses Приязнь, not Доверие. n is 1 (a word, a small favour or slight), 2 (a real service, a public slight, a broken promise), 3 (saving a life or honour, a betrayal, a humiliation before everyone). The effects of national policy on them are counted by the code from their interests; do not duplicate them. Write "ЗНАКОМСТВО: <name>" when {{user}} meets a tracked character for the first time. "ТРЕБОВАНИЕ: <name>" also works for tracked characters (a direct demand they must answer). Tracked: ${PEOPLE.people.map(p => p.name).join(', ')}.
+  Their deeds follow their grades in ОТНОШЕНИЯ; keep ЗА КАДРОМ consistent with them (a hostile character works against {{user}} by the means of his office and nature, a loyal one helps).
 - ЗА КАДРОМ: advance the agendas of absent characters and factions according to their goals and character, limited by the speed of couriers and marches.
-- ДОСЬЕ: only characters who appeared in play or act off-screen. For each: Где, Состояние, Отношение к {{user}} (number and reason), Знает о {{user}}, Обещания и долги, Сейчас занят, Изменилось. Move the dead to a line "Выбыли". Characters know only what they saw or heard.
+- ДОСЬЕ: only characters who appeared in play or act off-screen. For each: Где (a named place when possible — news reach characters there), Состояние, Отношение к {{user}}, Знает о {{user}}, Обещания и долги, Сейчас занят, Изменилось. For the tracked characters listed in section "ОТНОШЕНИЯ" do NOT write numbers or grades of their attitude: the code keeps them; write only the facts. For other characters write Отношение к {{user}} as a number −5…+5 with the reason. Move the dead to a line "Выбыли". Characters know only what they saw or heard.
 - СОСТОЯНИЕ holds only what {{user}} and the court know. Everything {{user}} does not know (true motives, hidden moves) goes to ТАЙНОЕ.
 
 ${GEO}`;
@@ -381,7 +417,7 @@ async function update({ manual = false } = {}) {
         const basePrompt = `ПРЕЖНЯЯ ЛЕТОПИСЬ:\n${sub(d.text)}\n\nНОВЫЕ СОБЫТИЯ ИГРЫ:\n${events}${staleNote}\n\nВыведи обновлённую Летопись целиком.`;
         const oldDay = parseDate(d.text) ?? SUMMON_DAY;
         const lore = await loreFor(`${d.text}\n${events}`);
-        const systemPrompt = `${sub(CHRONICLER)}\n\n${timelineText(oldDay)}\n\nРЕАКЦИЯ МИРА (посчитано кодом на ${fmt(worldOf(d).lastDay)}):\n${reactionText(worldOf(d))}\n\nСПРАВКА ЛОРБУКА (истина мира; Летопись не может ей противоречить):\n${lore}`;
+        const systemPrompt = `${sub(CHRONICLER)}\n\n${timelineText(oldDay)}\n\nРЕАКЦИЯ МИРА (посчитано кодом на ${fmt(worldOf(d).lastDay)}):\n${reactionText(worldOf(d))}\n\nОТНОШЕНИЯ (посчитано кодом):\n${peopleText(worldOf(d))}\n\nСПРАВКА ЛОРБУКА (истина мира; Летопись не может ей противоречить):\n${lore}`;
         // Одна попытка: запрос, разбор, эффекты, проверка стража. Возвращает готовую запись или причину отказа.
         const attempt = async (note) => {
             let result = await c.generateRaw({ prompt: basePrompt + note, systemPrompt, responseLength: 2400 });
@@ -394,10 +430,15 @@ async function update({ manual = false } = {}) {
             // Решения этой пачки сдвигают показатели в день новой записи; вести расходятся со скоростью курьера.
             const day = Math.max(newDay ?? oldDay, worldOf(d).lastDay);
             const world = cloneWorld(worldOf(d));
-            const parsed = parseEffects(effectsText);
+            const parsed = parseEffects(countryLines(effectsText));
+            const demandNames = parsed.demand.slice();
+            parsed.demand = demandActors(parsed.demand);
+            const people = parsePeople(effectsText);
+            if (people.unknown.length) console.warn('[Летопись] Строки отношений без известного персонажа:', people.unknown);
             if (parsed.unknown.length) console.warn('[Летопись] Неизвестные показатели отброшены:', parsed.unknown);
             applyEffects(world, parsed, day, delayOf, effectsText.slice(0, 300));
-            advance(world, day);
+            if (world.people) applyPeople(world, people, day, demandNames);
+            advanceAll(world, day, personDelay(result));
             const early = earlyEvent(d.text, result, newDay ?? oldDay, world);
             if (early) return { fail: 'early', early, raw: result };
             return { result, world };
@@ -456,6 +497,7 @@ async function show(name, title) {
     if (name === 'СОСТОЯНИЕ') { const reg = section(sub(d.text), REGISTRY); if (reg) body += '\n\nУСТАНОВЛЕНО\n' + reg; }
     if (name === 'ТАЙНОЕ') {
         const w = worldOf(d);
+        body += `\n\nОТНОШЕНИЯ (дело · лично)\n${peopleText(w)}`;
         const log = w.log.slice(-8).map(e => `${fmt(e.day)}: ${Object.entries(e.deltas).map(([k, v]) => `${k} ${v > 0 ? '+' : '−'}${Math.abs(v)}`).join('; ')}${e.remove.length ? ' · упразднены: ' + e.remove.join(', ') : ''}`);
         body += `\n\nРЕАКЦИЯ МИРА (на ${fmt(w.lastDay)})\n${reactionText(w)}${log.length ? '\n\nПОСЛЕДНИЕ СДВИГИ\n' + log.join('\n') : ''}`;
     }
@@ -466,7 +508,7 @@ async function show(name, title) {
 
 async function showSecrets() {
     const c = ctx();
-    const ok = await c.callGenericPopup('<h3>Показать тайное?</h3><p>Здесь скрытые ходы персонажей, реакция сословий и соседей и то, чего ваш герой не знает. Это спойлеры к вашей же игре.</p>', c.POPUP_TYPE.CONFIRM, '', { okButton: 'Показать', cancelButton: 'Не надо' });
+    const ok = await c.callGenericPopup('<h3>Показать тайное?</h3><p>Здесь скрытые ходы персонажей, их истинное отношение к герою, реакция сословий и соседей и то, чего ваш герой не знает. Это спойлеры к вашей же игре.</p>', c.POPUP_TYPE.CONFIRM, '', { okButton: 'Показать', cancelButton: 'Не надо' });
     if (ok === c.POPUP_RESULT.AFFIRMATIVE) await show('ТАЙНОЕ', 'Тайное');
 }
 

@@ -18,7 +18,8 @@ export function attitude(world, a) {
     const axes = world.perceived[a.id];
     let s = 0;
     for (const [axis, w] of Object.entries(a.watch)) s += w * (axes[axis] ?? 0);
-    return a.base + 2 * s / weightSum(a) + (world.memory[a.id] || 0);
+    // world.personal — личное доверие к {{user}} (для герцогов, из «Отношений»).
+    return a.base + 2 * s / weightSum(a) + (world.memory[a.id] || 0) + (world.personal?.[a.id] || 0);
 }
 
 function targetStage(att) {
@@ -84,7 +85,25 @@ export function parseEffects(text) {
 
 function schedule(world, day, days, deltas, note, quiet, delayOf) {
     world.scheduled = world.scheduled || [];
-    world.scheduled.push({ at: day + days, deltas, note, quiet, arrive: Object.fromEntries(activeActors(world).map(a => [a.id, delayOf(a)])) });
+    // origin — номер записи журнала осей, от которой пошло это последствие (для отсечки у персонажей).
+    world.scheduled.push({ at: day + days, from: day, origin: (world.axesLog || []).length, deltas, note, quiet, arrive: Object.fromEntries(activeActors(world).map(a => [a.id, delayOf(a)])) });
+}
+
+// Журнал фактических изменений осей: по нему персонажи узнают о переменах (с задержкой по месту). from — день решения.
+function logAxes(world, day, from, applied, origin) {
+    const d = Object.fromEntries(Object.entries(applied).filter(([, v]) => v));
+    if (!Object.keys(d).length) return;
+    world.axesLog = world.axesLog || [];
+    world.axesLog.push({ day, from, origin: origin ?? world.axesLog.length, d });
+}
+function addAxes(world, deltas) {
+    const applied = {};
+    for (const [axis, v] of Object.entries(deltas)) {
+        const before = world.axes[axis] ?? 0;
+        world.axes[axis] = clamp(before + v, -MAX(), MAX());
+        applied[axis] = world.axes[axis] - before;
+    }
+    return applied;
 }
 
 // Применить сдвиги в день `day`. delayOf(actor) — дни, за которые весть дойдёт до актора.
@@ -95,18 +114,14 @@ export function applyEffects(world, parsed, day, delayOf, note = '') {
     // Временное: применяем сразу, откат — ровно на то, что реально применилось (у края шкалы — меньше).
     const news = { ...deltas };
     for (const t of parsed.temp || []) {
-        const applied = {};
-        for (const [axis, v] of Object.entries(t.deltas)) {
-            const before = world.axes[axis] ?? 0;
-            world.axes[axis] = clamp(before + v, -MAX(), MAX());
-            applied[axis] = world.axes[axis] - before;
-            news[axis] = (news[axis] || 0) + v;
-        }
+        const applied = addAxes(world, t.deltas);
+        logAxes(world, day, day, applied);
+        for (const [axis, v] of Object.entries(t.deltas)) news[axis] = (news[axis] || 0) + v;
         const back = Object.fromEntries(Object.entries(applied).filter(([, v]) => v).map(([k, v]) => [k, -v]));
         if (Object.keys(back).length) schedule(world, day, t.days, back, 'прошло: ' + t.note, true, delayOf);
     }
     if (!Object.keys(news).length && !remove.length && !demand.length) return world;
-    for (const [axis, v] of Object.entries(deltas)) world.axes[axis] = clamp((world.axes[axis] ?? 0) + v, -MAX(), MAX());
+    logAxes(world, day, day, addAxes(world, deltas));
     for (const id of remove) if (R.actors.some(a => a.id === id && a.removable) && !world.removed.includes(id)) world.removed.push(id);
     for (const a of activeActors(world)) world.queue.push({ actor: a.id, deltas: news, arrive: day + delayOf(a), demand: demand.includes(a.id) || demand.includes(a.name) });
     world.log.push({ day, deltas: news, remove, note });
@@ -121,7 +136,7 @@ export function advance(world, toDay) {
     for (let day = world.lastDay + 1; day <= toDay; day++) {
         // отложенные последствия наступили
         for (const sc of (world.scheduled || []).filter(x => x.at === day)) {
-            for (const [axis, v] of Object.entries(sc.deltas)) world.axes[axis] = clamp((world.axes[axis] ?? 0) + v, -MAX(), MAX());
+            logAxes(world, day, sc.from ?? day, addAxes(world, sc.deltas), sc.origin);
             for (const a of activeActors(world)) world.queue.push({ actor: a.id, deltas: sc.deltas, arrive: day + (sc.arrive[a.id] ?? 1), quiet: sc.quiet });
             world.log.push({ day, deltas: sc.deltas, remove: [], note: (sc.quiet ? '' : 'наступило: ') + sc.note });
         }

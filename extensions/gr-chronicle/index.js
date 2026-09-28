@@ -31,7 +31,7 @@ const LORE_BOOKS = [
 ];
 // Эти книги Летописец видит всегда целиком: карта и узлы сюжета. Плюс запись календаря.
 const LORE_ALWAYS = ['ГР — География', 'ГР — Канон · узлы сюжета'];
-const LORE_ALWAYS_ENTRIES = ['Континентальный календарь', 'Время и темп игры', 'Сколько занимают дела', 'Вести и связь', 'Мера мира: правила чисел', 'Карта и пути', 'Скорости', 'Цены и жалованье', 'Население', 'Хозяйство и казна', 'Власть и ответственность', 'Безликие исполнители'];
+const LORE_ALWAYS_ENTRIES = ['Континентальный календарь', 'Время и темп игры', 'Сколько занимают дела', 'Вести и связь', 'Мера мира: правила чисел', 'Карта и пути', 'Скорости', 'Цены и жалованье', 'Население', 'Хозяйство и казна', 'Государство: совет и канцелярия', 'Государство: финансы и подати', 'Государство: суд и провинции', 'Государство: армия, флот и небо', 'Государство: королевский дом', 'Как движутся дела', 'Безликие исполнители'];
 const LORE_BUDGET = 34000; // символов справки на одно обновление
 
 async function bookNames() {
@@ -191,7 +191,7 @@ function travelNote(text) {
     const sp = Object.fromEntries(MERA.speeds.map(x => [x.id, x.kmDay]));
     const rows = MERA.places.filter(p => p.id !== here.id && (p.main || !p.rough)).map(p => {
         const d = kmBetween(here, p);
-        return `${p.name}: ${d} км · армия ${fmtTime(d / sp.march)} · всадник ${fmtTime(d / sp.rider)} · гонец ${fmtTime(d / sp.courier)} · виверна ${fmtTime(d / sp.wyvern)}`;
+        return `${p.name}: ${d} км · армия ${fmtTime(d / sp.march)} · всадник ${fmtTime(d / sp.rider)} · курьер ${fmtTime(d / sp.courier)} · виверна ${fmtTime(d / sp.wyvern)}`;
     });
     return `[Справка пути от места «${here.name}» — посчитано по «Мере мира»; сутки пути ≈ 10 часов]\n${rows.join('\n')}`;
 }
@@ -261,7 +261,7 @@ FACTS
 - Never invent. Every fact about a person, place, distance, date, title, name or sum comes from the LORE REFERENCE (section "СПРАВКА ЛОРБУКА") or from the game events. If there is no source, omit it or write "неизвестно".
 - Distances and travel times: only from "Карта и пути" / "Скорости" (section "Мера мира") and the travel note. Money: only from "Цены и жалованье", "Хозяйство и казна" or the registry УСТАНОВЛЕНО.
 - UNKNOWN VALUES: if a number is missing, derive it from «Мера мира» (prices in days of a labourer's wage of 100 G; travel via speeds; population via the tiers) and pin it in УСТАНОВЛЕНО. Never invent a number without such a derivation.
-- WHO DOES WHAT: routine work is done by faceless executors of the responsible office ("Власть и ответственность"); named characters only decide, receive reports, or act when the matter needs their authority.
+- WHO DOES WHAT: routine work is done by faceless executors of the responsible office (entries "Государство: …" and "Как движутся дела"); named characters only decide, receive reports, or act when the matter needs their authority.
 - A character learns news only when a courier could physically have brought it (see "Вести и связь").
 - If the previous Chronicle contradicts the reference or the latest game events, correct it. If the events changed a fact (the player replayed a scene), take the latest version.
 

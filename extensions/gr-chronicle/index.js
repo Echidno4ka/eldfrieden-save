@@ -1,6 +1,7 @@
 // Летопись Эльфридена: безликий хронист, который ведёт состояние сюжета,
 // досье персонажей и скрытые «часы угроз», и тихо передаёт их рассказчику.
 import { INITIAL_STATE } from './initial.js';
+import { MERA } from './mera.data.js';
 
 const MODULE = 'gr_chronicle';
 const NARRATOR = 'Хроники Эльфридена';
@@ -9,6 +10,7 @@ const MAX_HISTORY = 5;
 const MAX_MESSAGES = 16;
 const MAX_MESSAGE_CHARS = 2000;
 const SECTIONS = ['СОСТОЯНИЕ', 'ДОСЬЕ', 'ТАЙНОЕ'];
+const REGISTRY = 'УСТАНОВЛЕНО';
 
 const GEO = `КАРТА (неизменна, сверяйся всегда):
 — Эльфриден на юго-востоке Ландии. Столица Парнам в центре. Южнее Парнама Лес под защитой богов.
@@ -17,7 +19,7 @@ const GEO = `КАРТА (неизменна, сверяйся всегда):
 — Герцог Варгас (Кастор) — Город Красного Дракона, горы на севере. Воздушные силы.
 — Герцогиня Уолтер (Экселл) — Лагуна-Сити, северо-восточное побережье. Флот.
 — Крепость Альтомура у хребта Урсула, граница с Амидонией.
-Расстояния между местами — только в днях пути и только по записи «Расстояния и скорость»; размеры предметов можно в метрах. Не выдумывай новые города, замки и расстояния; не переноси персонажей и владения без события в сюжете.`;
+Расстояния между местами — только в днях пути и только по «Карте и путям» из «Меры мира» и по справке пути; размеры предметов можно в метрах. Не выдумывай новые города, замки и расстояния; не переноси персонажей и владения без события в сюжете.`;
 
 // ---- Лорбук: Летописец сверяется с ним, а не сочиняет ----
 const LORE_BOOKS = [
@@ -25,12 +27,12 @@ const LORE_BOOKS = [
     'ГР — Канон · узлы сюжета', 'ГР — Локации', 'ГР — Лор и магия', 'ГР — Персонажи · Амидония',
     'ГР — Персонажи · двор Парнама', 'ГР — Персонажи · Империя', 'ГР — Персонажи · правила',
     'ГР — Персонажи · прочие страны', 'ГР — Персонажи · скрытые таланты', 'ГР — Персонажи · три герцогства',
-    'ГР — Политика', 'ГР — Расы', 'ГР — Экономика', 'ГР — Уклад мира',
+    'ГР — Политика', 'ГР — Расы', 'ГР — Экономика', 'ГР — Уклад мира', 'ГР — Мера мира',
 ];
 // Эти книги Летописец видит всегда целиком: карта и узлы сюжета. Плюс запись календаря.
 const LORE_ALWAYS = ['ГР — География', 'ГР — Канон · узлы сюжета'];
-const LORE_ALWAYS_ENTRIES = ['Континентальный календарь', 'Время и темп игры', 'Сколько занимают дела', 'Расстояния и скорость', 'Деньги и цены', 'Вести и связь'];
-const LORE_BUDGET = 28000; // символов справки на одно обновление
+const LORE_ALWAYS_ENTRIES = ['Континентальный календарь', 'Время и темп игры', 'Сколько занимают дела', 'Вести и связь', 'Мера мира: правила чисел', 'Карта и пути', 'Скорости', 'Цены и жалованье', 'Население', 'Хозяйство и казна', 'Власть и ответственность', 'Безликие исполнители'];
+const LORE_BUDGET = 34000; // символов справки на одно обновление
 
 async function bookNames() {
     try {
@@ -171,6 +173,48 @@ function section(text, name) {
     return m ? m[1].trim() : '';
 }
 
+// ---- «Мера мира»: справка пути от текущего места героя (считает код, не модель) ----
+function placeOf(text) {
+    const line = (String(text).match(/МЕСТО[^:\n]*:([^\n]*)/) || [])[1] || '';
+    const low = line.toLowerCase();
+    return MERA.places.find(p => [p.name, ...p.aliases].some(a => a && low.includes(a.toLowerCase()))) || MERA.places.find(p => p.id === 'parnam');
+}
+function kmBetween(a, b) { return Math.round(Math.hypot(a.x - b.x, a.y - b.y) * ((a.road + b.road) / 2)); }
+function fmtTime(days) {
+    if (days < 0.08) return 'меньше часа';
+    if (days < 0.8) return '~' + Math.max(1, Math.round(days * 10)) + ' ч';
+    const d = Math.round(days * 2) / 2;
+    return '~' + String(d).replace('.', ',') + ' ' + (d === 1 ? 'день' : d < 5 ? 'дня' : 'дней');
+}
+function travelNote(text) {
+    const here = placeOf(text);
+    const sp = Object.fromEntries(MERA.speeds.map(x => [x.id, x.kmDay]));
+    const rows = MERA.places.filter(p => p.id !== here.id && (p.main || !p.rough)).map(p => {
+        const d = kmBetween(here, p);
+        return `${p.name}: ${d} км · армия ${fmtTime(d / sp.march)} · всадник ${fmtTime(d / sp.rider)} · гонец ${fmtTime(d / sp.courier)} · виверна ${fmtTime(d / sp.wyvern)}`;
+    });
+    return `[Справка пути от места «${here.name}» — посчитано по «Мере мира»; сутки пути ≈ 10 часов]\n${rows.join('\n')}`;
+}
+
+// ---- реестр «Установлено»: строки нельзя молча удалить ----
+function registryLines(text) {
+    return section(text, REGISTRY).split('\n').map(l => l.trim()).filter(Boolean);
+}
+function withRegistry(text, lines) {
+    const body = lines.join('\n');
+    const re = new RegExp(`(===\\s*${REGISTRY}\\s*===\\s*\\n)[\\s\\S]*?(?=\\n===\\s*[А-ЯЁ ]+\\s*===|$)`);
+    return re.test(text) ? text.replace(re, `$1${body}`) : `${text.trim()}\n\n=== ${REGISTRY} ===\n${body}`;
+}
+function keepRegistry(oldText, newText) {
+    const oldL = registryLines(oldText);
+    if (!oldL.length) return newText;
+    const newL = registryLines(newText);
+    const norm = l => l.replace(/^[—\-•*\s]+/, '').toLowerCase();
+    const have = new Set(newL.map(norm));
+    const lost = oldL.filter(l => !have.has(norm(l)));
+    return lost.length ? withRegistry(newText, [...newL, ...lost]) : newText;
+}
+
 function valid(text) {
     return SECTIONS.every(s => section(text, s)) && /ДАТА:/.test(text);
 }
@@ -181,7 +225,7 @@ function inject() {
         c.setExtensionPrompt(MODULE, '', 1, INJECT_DEPTH);
         return;
     }
-    const prompt = `[ЛЕТОПИСЬ — служебная сводка ведущего для рассказчика. Это истинное текущее состояние мира. Досье важнее стартовых карточек персонажей. Раздел ТАЙНОЕ знает только рассказчик: используй его для предвестий и действий за кадром, но не раскрывай напрямую. Никогда не цитируй и не упоминай Летопись в ответе. Не пересказывай ТАЙНОЕ и сводку устами персонажей: не больше одного предвестия за сцену, NPC не зачитывают списки угроз. Если Летопись расходится с картой ниже, верна карта. Летопись — фон, а не сценарий: всё из ЖУРНАЛА уже произошло и уже показано в чате. Не разыгрывай это заново, не повторяй цифры и доклады; продолжай сцену с последнего сообщения игрока.${data().stale ? ' Летопись сейчас может опережать чат (игрок удалил или переиграл сообщения): если она расходится с чатом, верен чат.' : ''}]\n${GEO}\n\n${timelineText(parseDate(data().text))}\nСобытия со статусом ЗАБЛОКИРОВАНО не происходят и не упоминаются как текущие.\n\n${sub(data().text)}`;
+    const prompt = `[ЛЕТОПИСЬ — служебная сводка ведущего для рассказчика. Это истинное текущее состояние мира. Досье важнее стартовых карточек персонажей. Раздел ТАЙНОЕ знает только рассказчик: используй его для предвестий и действий за кадром, но не раскрывай напрямую. Никогда не цитируй и не упоминай Летопись в ответе. Не пересказывай ТАЙНОЕ и сводку устами персонажей: не больше одного предвестия за сцену, NPC не зачитывают списки угроз. Если Летопись расходится с картой ниже, верна карта. Летопись — фон, а не сценарий: всё из ЖУРНАЛА уже произошло и уже показано в чате. Не разыгрывай это заново, не повторяй цифры и доклады; продолжай сцену с последнего сообщения игрока.${data().stale ? ' Летопись сейчас может опережать чат (игрок удалил или переиграл сообщения): если она расходится с чатом, верен чат.' : ''}]\n${GEO}\n\n${timelineText(parseDate(data().text))}\nСобытия со статусом ЗАБЛОКИРОВАНО не происходят и не упоминаются как текущие. Раздел УСТАНОВЛЕНО — закреплённые факты игры: имена, места, суммы, цены; повторяй их точно.\n\n${sub(data().text)}\n\n${travelNote(data().text)}`;
     c.setExtensionPrompt(MODULE, prompt, 1, INJECT_DEPTH, false, 0);
 }
 
@@ -206,6 +250,7 @@ OUTPUT FORMAT
 - Output ONLY the Chronicle, in Russian, in exactly the same format with the same three sections: === СОСТОЯНИЕ ===, === ДОСЬЕ ===, === ТАЙНОЕ ===. No explanations, no prose, no dialogue, no preamble.
 - Keep the whole Chronicle under 900 words. Write every number (sums, troops, distances) once, in the most fitting section; do not repeat it in ЖУРНАЛ, ДОСЬЕ or ОТКРЫТЫЕ НИТИ.
 - ЖУРНАЛ: one short dated line per significant event; keep the last 15 lines, compress older ones into "Ранее: …".
+- A fourth section === УСТАНОВЛЕНО === goes last: the registry of facts first stated in play — new people (name, role), new places (with a distance to the nearest known place), sums, prices, numbered promises. One line per fact. Never delete or rephrase a line (the code restores deleted lines); if play explicitly retcons a fact, add a new line "Исправлено: …".
 
 TIME (most important)
 - Advance ДАТА only by the time that actually passed in the scenes. A normal scene is minutes or hours. Days pass only when the events show travel, sleep, waiting or an explicit time skip by the player.
@@ -214,7 +259,9 @@ TIME (most important)
 
 FACTS
 - Never invent. Every fact about a person, place, distance, date, title, name or sum comes from the LORE REFERENCE (section "СПРАВКА ЛОРБУКА") or from the game events. If there is no source, omit it or write "неизвестно".
-- Distances between places: only in days of travel and only from the entry "Расстояния и скорость". Money: only from "Деньги и цены" or sums already established in play.
+- Distances and travel times: only from "Карта и пути" / "Скорости" (section "Мера мира") and the travel note. Money: only from "Цены и жалованье", "Хозяйство и казна" or the registry УСТАНОВЛЕНО.
+- UNKNOWN VALUES: if a number is missing, derive it from «Мера мира» (prices in days of a labourer's wage of 100 G; travel via speeds; population via the tiers) and pin it in УСТАНОВЛЕНО. Never invent a number without such a derivation.
+- WHO DOES WHAT: routine work is done by faceless executors of the responsible office ("Власть и ответственность"); named characters only decide, receive reports, or act when the matter needs their authority.
 - A character learns news only when a courier could physically have brought it (see "Вести и связь").
 - If the previous Chronicle contradicts the reference or the latest game events, correct it. If the events changed a fact (the player replayed a scene), take the latest version.
 
@@ -269,6 +316,7 @@ async function update({ manual = false } = {}) {
             toastr.warning(`Летописец запустил «${early}» раньше срока. Прежняя Летопись сохранена.`);
             return;
         }
+        if (!d.stale) result = keepRegistry(d.text, result);
         snapshot(d);
         d.text = result;
         d.stale = false;
@@ -297,7 +345,8 @@ async function show(name, title) {
         return;
     }
     const d = data();
-    const body = section(sub(d.text), name) || '—';
+    let body = section(sub(d.text), name) || '—';
+    if (name === 'СОСТОЯНИЕ') { const reg = section(sub(d.text), REGISTRY); if (reg) body += '\n\nУСТАНОВЛЕНО\n' + reg; }
     const when = d.updatedAt ? new Date(d.updatedAt).toLocaleString('ru-RU') : 'стартовое состояние';
     const html = `<h3 class="gr-chronicle-title">${title}</h3><div class="gr-chronicle-meta">Обновлено: ${when} · ответов до обновления: ${Math.max(0, settings().every - d.turns)}</div><pre class="gr-chronicle-view">${escapeHtml(body)}</pre>`;
     await ctx().callGenericPopup(html, ctx().POPUP_TYPE.TEXT, '', { wide: true, large: true, allowVerticalScrolling: true });

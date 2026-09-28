@@ -65,7 +65,7 @@ export function applyBatch(world, text, day, delays, note = '') {
     catch (e) { errors.push('хозяйство: ' + (e?.message || e)); }
     try { people = parsePeople(peopleText); if (world.people) applyPeople(world, people, day, demandNames, delays.person); }
     catch (e) { errors.push('отношения: ' + (e?.message || e)); }
-    return { unknownAxes: parsed.unknown, unknownEco: eco.unknown, unknownPeople: people.unknown, errors, resourcesWritten: notes.includes('Ресурсы') || (fallback && (fallback.later.length || fallback.temp.length) > 0) };
+    return { unknownAxes: parsed.unknown, unknownEco: eco.unknown, unknownPeople: people.unknown, errors, repeats: notes.filter(n => n === 'повтор').length, resourcesWritten: notes.includes('Ресурсы') || (fallback && (fallback.later.length || fallback.temp.length) > 0) };
 }
 
 // Зафиксировать пачку эффектов в день `day` — один и тот же порядок для игры и для пересчёта колодца:

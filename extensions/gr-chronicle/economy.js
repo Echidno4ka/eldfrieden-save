@@ -121,13 +121,24 @@ function marketLag(market) {
 }
 
 // fallback — «Ресурсы ±n», которые Летописец написал вместо суммы: { now, later:[{days, points, note}], temp:[{days, points, note}] }.
+// Защита от повторов: доклады и пропуски времени пересказывают прошлые решения — второй раз их не считаем.
+const HOARD_REPEAT_DAYS = 96;                                   // вторая продажа за сезон — только явно («ещё», «снова»)
+const HOARD_AGAIN = /ещ[её]|дополнительн|снова|повторн|втор/i;
+const HOARD_PROCEEDS = /сокровищ|ценност|драгоцен|распрода/i;   // выручку от продажи сокровищ код уже зачислил
+const entKey = s => String(s).toLowerCase().replace(/ё/g, 'е').replace(/[«»"'„“]/g, '').replace(/\s+/g, ' ').trim();
+
 export function applyEconomy(world, parsed, day, fallback = null, delayActor = () => 1) {
     const eco = world.eco;
     const notes = [];
-    for (const c of parsed.cash) { eco.cash += c.g; logEco(eco, day, `${fmtG(c.g)} — ${c.note}`); }
+    for (const c of parsed.cash) {
+        if (c.g > 0 && eco.lastHoardDay != null && HOARD_PROCEEDS.test(c.note)) { logEco(eco, day, `повтор не учтён: ${fmtG(c.g)} — ${c.note} (выручка сокровищницы уже зачислена)`); notes.push('повтор'); continue; }
+        eco.cash += c.g; logEco(eco, day, `${fmtG(c.g)} — ${c.note}`);
+    }
     for (const h of parsed.hoard) {
+        if (eco.lastHoardDay != null && day - eco.lastHoardDay < HOARD_REPEAT_DAYS && !HOARD_AGAIN.test(h.note)) { logEco(eco, day, `повтор не учтён: продажа сокровищницы уже была ${day - eco.lastHoardDay} дн. назад`); notes.push('повтор'); continue; }
         const g = eco.hoard * h.share;
         eco.hoard -= g; eco.cash += g;
+        eco.lastHoardDay = day;
         logEco(eco, day, `продано из сокровищницы ${fmtG(g)} (${Math.round(h.share * 100)}%)`);
     }
     for (const d of parsed.debt) {
@@ -153,7 +164,8 @@ export function applyEconomy(world, parsed, day, fallback = null, delayActor = (
         if (e) { e.open = false; logEco(eco, day, `закрыто дело «${e.name}»`); }
     }
     for (const spec of parsed.ent) {
-        const t = E.templates[spec.kind][Math.max(0, E.sizes.indexOf(spec.size))];
+        if (eco.ent.some(x => x.open && entKey(x.name) === entKey(spec.name))) { logEco(eco, day, `повтор не учтён: дело «${spec.name}» уже заведено`); notes.push('повтор'); continue; }
+        const t =E.templates[spec.kind][Math.max(0, E.sizes.indexOf(spec.size))];
         const lag = Math.min(...spec.markets.map(marketLag));
         const e = { name: spec.name, kind: spec.kind, size: spec.size, markets: spec.markets, open: true, started: day, sold: 0, profit: 0 };
         if (t.capital) {

@@ -13,17 +13,20 @@ import { initAll, upgrade, commitBatch, advanceWorld } from './world.js';
 import { newWell, replay, addBatch, removeFrom, beyondCheckpoint, pushText, loadWell, saveWell } from './well.js';
 
 const MODULE = 'gr_chronicle';
+const TAIL = MODULE + '_tail';      // короткое напоминание на глубине 0 — прямо перед ответом
 const MODES = { 'Хроники Эльфридена': 'scene', 'Кабинет Эльфридена': 'strategy' };
 const MODE_NAME = { scene: 'Хроники', strategy: 'Кабинет' };
 const INJECT_DEPTH = 4;
 const MAX_MESSAGES = 16;
-const ALREADY_BATCHES = 6;          // «уже учтено»: сколько последних пачек показывать Счётчику и стратегу
+const CHRONICLE_TOKENS = 4000;      // Летопись ~900 слов: у DeepSeek русский текст дороже в токенах, 2200 обрезало её
+const ALREADY_BATCHES = 6;         // «уже учтено»: сколько последних пачек показывать Счётчику и стратегу
 const ALREADY_LINES = 24;
 const BRIDGE_FRESH_LINES = 8;       // новому чату — только последние строки журнала
 const MAX_MESSAGE_CHARS = 2000;
 const SECTIONS = ['СОСТОЯНИЕ', 'ДОСЬЕ', 'ТАЙНОЕ'];
 const REGISTRY = 'УСТАНОВЛЕНО';
 const EFFECTS = 'ЭФФЕКТЫ';
+const MONEY = 'ДЕНЬГИ';
 
 const GEO = `КАРТА (неизменна, сверяйся всегда):
 — Эльфриден на юго-востоке Ландии. Столица Парнам в центре. Южнее Парнама Лес под защитой богов.
@@ -341,8 +344,18 @@ function markChat() {
 }
 
 // Зафиксировать пачку эффектов этого чата (после сообщения idx) в день `day`.
+const lineKey = l => l.toLowerCase().replace(/ё/g, 'е').replace(/[«»"']/g, '').replace(/\s+/g, ' ').trim();
+// Убрать из пачки пустые строки «решение: нет» и дословные повторы строк из недавних пачек (доклады их пересказывают).
+function dropRepeats(text) {
+    const seen = new Set(WELL.batches.slice(-ALREADY_BATCHES).flatMap(b => String(b.text).split('\n').map(lineKey)).filter(Boolean));
+    const lines = String(text).split('\n').map(s => s.trim()).filter(Boolean);
+    const kept = lines.filter(l => !/:\s*нет\.?$/i.test(l) && !seen.has(lineKey(l)) && !(lines.length > 1 && /^нет\.?$/i.test(l)));
+    const dropped = lines.length - kept.length;
+    if (dropped && !(lines.length === 1 && /^нет\.?$/i.test(lines[0]))) console.warn(`[Летопись] Отброшено строк-повторов и «: нет»: ${dropped}`);
+    return kept.join('\n');
+}
 function commit(effectsText, day, idx) {
-    const text = String(effectsText || '').trim();
+    const text = dropRepeats(String(effectsText || '').trim()).trim();
     if (!text || /^нет\.?$/i.test(text)) return null;       // время идёт в дате Летописи; мир доживёт его в view()
     const seats = seatsNow(WELL.text);
     const prev = { day: currentDay(), place: currentPlace() };   // что было до пачки — вернуть при откате
@@ -441,7 +454,8 @@ function alreadyText() {
 }
 
 // Напоминание в конце сводки: поближе к ответу оно действует сильнее, чем в карточке.
-const ANSWER_FORM = '[ФОРМА ОТВЕТА: ответ заканчивается действием, образом или репликой-утверждением. Не заканчивай вопросом к {{user}}, выбором вариантов или приглашением действовать.]';
+const ANSWER_FORM = '[ФОРМА ОТВЕТА: ответ заканчивается действием, образом или репликой-утверждением. Не заканчивай вопросом к {{user}}, выбором вариантов или приглашением действовать. Без оборотов «не X, а Y».]';
+const STRAT_TAIL = '[ОБЯЗАТЕЛЬНО: в самом конце ответа — служебный блок: строка «=== ЭФФЕКТЫ ===», затем ДАТА, МЕСТО {{user}} и строки эффектов по правилам из сводки (или «нет»). Деньги — строками КАЗНА / СОКРОВИЩНИЦА / ДЕЛО с числом в G. Без блока ответ не засчитается.]';
 
 // ---- правила эффектов (общие для Счётчика и стратега) ----
 const EFFECT_RULES = `EFFECTS — how the decisions and one-off events shifted the country's abstract indicators. Indicators run −10…+10, 0 is normal. Line formats:
@@ -452,11 +466,12 @@ const EFFECT_RULES = `EFFECTS — how the decisions and one-off events shifted t
   "УПРАЗДНИТЬ: <duke>" — a duke's house abolished by unification; "нет" — nothing shifted.
   n is 1 (noticeable), 2 (strong) or 3 (drastic). Calibration: one township's grievance 1; appointing a commoner or non-human over nobles 2; a new tax on the hungry 3; stripping a duke of his army 3; paying a whole year's tribute 3; admitting the dynasty's guilt in public 1.
   Record only decisions that took effect in play (an edict announced, taxes collected, troops paid, a treaty signed) and one-off events (a harvest, a lost battle, a disaster). Not plans, talk or rumours. Do NOT record the slow worsening of an unsolved problem (hunger goes on, a debt stays unpaid): the code accrues that by itself. Do not record again what is listed as already scheduled.
+  An order of the ruler takes effect when it is given: record it in the same reply (money moves at once; the code handles delivery and timing). Never write "<decision>: нет" — "нет" is the whole section and only when nothing at all shifted; every decision that was made has effect lines.
   ONCE ONLY: every decision and event is recorded once, in the reply where it happened. Reports, reminders, summaries and time skips do NOT repeat lines already listed in «УЖЕ УЧТЕНО» or decisions made earlier; write only what is new (what happened during the skipped time, a new decision). The proceeds of a СОКРОВИЩНИЦА sale are credited by the code — never add them as КАЗНА. An enterprise already listed in ХОЗЯЙСТВО is never started again, and its setup cost is charged by the code — do not add КАЗНА for it.
   HIDDEN COST — for every decision write its side effects as separate lines, not only its purpose. Ask: who loses money, rank, work or face; who is passed over or made to do work beneath them; how it looks to the hungry, to soldiers, to priests; what it does to trade, prices and roads; what it causes in 1–3 months (depletion, black market, imitation, flight). Examples: noble soldiers set to dig sewers → Статус·войско −2; a feast or fried delicacies shown in a famine → Статус·чернь −1; everyone catches octopus at once → "ЧЕРЕЗ 96: отмели выбраны: Достаток·чернь −1"; half the officials purged → "НА 64: канцелярии пусты: Порядок −2".
   Use ONLY these indicators:
 ${AXES_HELP}
-MONEY (section "ХОЗЯЙСТВО", computed by code). Never write "Ресурсы ±n" — the treasury sets it. Write sums in G derived from «Мера мира» (wages, prices, «Казна в деле», «Дела короны»):
+MONEY (section "ХОЗЯЙСТВО", computed by code). Never write "Ресурсы ±n" — the treasury sets it. A money line STARTS with its keyword and always has a number: "КАЗНА: −3 000 000 G — хлеб из Зема", never "<cause>: Казна: …" and never "+… G". Write sums in G derived from «Мера мира» (wages, prices, «Казна в деле», «Дела короны»):
   "КАЗНА: ±N G — <why>" (one-off income or spending); "СОКРОВИЩНИЦА: продать треть | N%" (treasures into money, forever; a NEW sale after an earlier one must say so: "СОКРОВИЩНИЦА: продать ещё N%"); "ЕЖЕМЕСЯЧНО: ±N G — <name>" (a standing item; "0 G — <name>" cancels it); "ДОЛГ: −N G — <whom>" or "ДОЛГ: погасить" (the Empire's tribute); "ДОЛГ ВОЙСКУ: выплатить" (pay the army's arrears);
   "ДЕЛО: <name> · <ремесло|мануфактура|промысел|торговля> · <малое|среднее|большое> · сбыт: <знать, города, Зем, Амидония, Империя, Тургис, Лунария, Союз>" (the crown starts an enterprise; the code computes cost, time, output and sales); "ДЕЛО ЗАКРЫТЬ: <name>".
   Taxes (Бремя·чернь), famine and disorder change the crown's income by themselves. An enterprise sells nothing before the date in ХОЗЯЙСТВО.
@@ -472,8 +487,10 @@ const TIME_RULES = `TIME (most important)
 const COUNTER = `You are the Counter of a role-play set in the world of the light novel "How a Realist Hero Rebuilt the Kingdom" (Elfrieden, Landia, 1546). You are not the narrator and not a character. From the new game events you output ONLY this, in Russian, nothing else:
 ДАТА: <year> г., <month>-й месяц, <day>-й день
 МЕСТО {{user}}: <where {{user}} is now>
+=== ДЕНЬГИ ===
+<every movement of the crown's money in the new events, one line each: an order to spend or buy → "КАЗНА: −N G — what"; income → "КАЗНА: +N G — from what"; selling the royal treasures → "СОКРОВИЩНИЦА: продать треть" (the code credits the money); a standing expense → "ЕЖЕМЕСЯЧНО: …"; tribute → "ДОЛГ: …"; a crown enterprise → "ДЕЛО: …". If the ruler ordered a sale or a purchase, the line is here even if the goods are not delivered yet. "нет" only if no money moved or was committed.>
 === ЭФФЕКТЫ ===
-<one effect per line, or "нет">
+<the other effects, one per line, or "нет">
 
 ${TIME_RULES}
 - Distances and travel times: only from "Карта и пути" / "Скорости". Sums: only derived from «Мера мира».
@@ -516,7 +533,8 @@ const STRAT_EFFECTS = `[СЛУЖЕБНЫЙ БЛОК — в самом конце
 === ЭФФЕКТЫ ===
 ДАТА: <год> г., <месяц>-й месяц, <день>-й день — дата на конец твоего ответа (время идёт вперёд так, как прошло в ответе; пропуск недель — только если его объявил игрок или его требуют дела)
 МЕСТО {{user}}: <где {{user}} сейчас>
-<строки эффектов или «нет»>
+<сначала деньги — каждая трата, покупка, доход, продажа сокровищ, новое дело короны, по строке: «КАЗНА: −N G — что», «СОКРОВИЩНИЦА: продать треть», «ДЕЛО: …»; приказ купить или продать — строка сразу, даже если товар ещё в пути>
+<затем остальные строки эффектов; если ничего не сдвинулось — одно слово «нет»>
 ${EFFECT_RULES}]`;
 
 async function generate(prompt, systemPrompt, responseLength) {
@@ -545,7 +563,9 @@ async function count({ manual = false } = {}) {
     const systemPrompt = `${sub(COUNTER)}\n\n${timelineText(oldDay)}\n\nРЕАКЦИЯ МИРА (посчитано кодом):\n${reactionText(w)}\n\nОТНОШЕНИЯ (посчитано кодом):\n${peopleText(w)}\n\nХОЗЯЙСТВО (посчитано кодом):\n${ecoText(w)}\n\n${alreadyText()}\n\nСПРАВКА ЛОРБУКА:\n${lore}`;
     const prompt = `ТЕКУЩЕЕ СОСТОЯНИЕ (из Летописи):\n${sub(section(WELL.text, 'СОСТОЯНИЕ'))}\n\nУСТАНОВЛЕНО:\n${sub(section(WELL.text, REGISTRY)) || '—'}\n\nНОВЫЕ СОБЫТИЯ ИГРЫ:\n${events}${st.stale ? staleNote : ''}\n\nВыведи ДАТА, МЕСТО и ЭФФЕКТЫ.`;
     const raw = await generate(prompt, systemPrompt, 900);
-    const effects = section(raw, EFFECTS) || (raw.split(/===\s*ЭФФЕКТЫ\s*===/)[1] || '').trim();
+    // Деньги — отдельным разделом: слабые модели иначе пишут одни настроения и забывают суммы.
+    const effects = [section(raw, MONEY), section(raw, EFFECTS) || (raw.split(/===\s*ЭФФЕКТЫ\s*===/)[1] || '').trim()]
+        .map(s => String(s || '').trim()).filter(s => s && !/^нет\.?$/i.test(s)).join('\n');
     let day = parseDate(raw) ?? oldDay;
     if (day < oldDay) day = oldDay;                    // время только вперёд
     commit(effects, day, c.chat.length - 1);
@@ -566,7 +586,7 @@ async function chronicle({ manual = false } = {}) {
     const basePrompt = `ПРЕЖНЯЯ ЛЕТОПИСЬ:\n${sub(WELL.text)}\n\nНОВЫЕ СОБЫТИЯ ИГРЫ (чат «${MODE_NAME[st.mode]}»):\n${events}${st.stale ? staleNote : ''}\n\nВыведи обновлённую Летопись целиком.`;
     const systemPrompt = `${sub(CHRONICLE)}\n\n${timelineText(day)}\n\nРЕАКЦИЯ МИРА (посчитано кодом на ${fmt(w.lastDay)}):\n${reactionText(w)}\n\nОТНОШЕНИЯ (посчитано кодом):\n${peopleText(w)}\n\nХОЗЯЙСТВО (посчитано кодом):\n${ecoText(w)}\n\nСПРАВКА ЛОРБУКА (истина мира; Летопись не может ей противоречить):\n${lore}`;
     const attempt = async (note) => {
-        let result = await generate(basePrompt + note, systemPrompt, 2200);
+        let result = await generate(basePrompt + note, systemPrompt, CHRONICLE_TOKENS);
         if (section(result, EFFECTS)) console.warn('[Летопись] Хроникёр написал эффекты — их ведёт Счётчик, отброшено.');
         result = stripEffects(result);
         if (!valid(result)) return { fail: 'format', raw: result };
@@ -666,17 +686,20 @@ function inject() {
     const c = ctx();
     if (!WELL || !isOurChat() || !settings().enabled) {
         c.setExtensionPrompt(MODULE, '', 1, INJECT_DEPTH);
+        c.setExtensionPrompt(TAIL, '', 1, 0);
         return;
     }
     const st = state();
     const w = view();
     let prompt;
     if (st.mode === 'strategy') {
-        prompt = `[КАБИНЕТ — служебная сводка для ведущего стратегической партии. Это то, что знает двор: Летопись без тайного, казна, донесения о настроениях сословий, герцогов и соседей. Ты говоришь голосом совета, канцелярии, донесений и советников. Время идёт так, как решает игрок и как требуют дела: доклады приходят с задержкой гонца, дела занимают свои дни. Числа — только из сводок ниже. Не упоминай Летопись и сводки в ответе. Не пиши за {{user}}.]\n${GEO}\n\n${timelineText(currentDay())}\n\n${sub(withoutSecret(WELL.text))}\n\n${travelNote(WELL.text)}\n\n[ЧТО ДОНОСЯТ ДВОРУ — видимые дела сословий, герцогов и соседей:]\n${visibleReaction(w)}\n\n[ХОЗЯЙСТВО — казна и дела короны, посчитано кодом:]\n${ecoText(w, true)}\n\n${alreadyText()}${bridge(st)}\n\n${ANSWER_FORM}\n\n${sub(STRAT_EFFECTS)}`;
+        prompt = `[КАБИНЕТ — служебная сводка для ведущего стратегической партии. Это то, что знает двор: Летопись без тайного, казна, донесения о настроениях сословий, герцогов и соседей. Ты говоришь голосом совета, канцелярии, донесений и советников. Время идёт так, как решает игрок и как требуют дела: доклады приходят с задержкой гонца, дела занимают свои дни. Числа — только из сводок ниже. Не упоминай Летопись и сводки в ответе. Не пиши за {{user}}.]\n${GEO}\n\n${timelineText(currentDay())}\n\n${sub(withoutSecret(WELL.text))}\n\n${travelNote(WELL.text)}\n\n[ЧТО ДОНОСЯТ ДВОРУ — видимые дела сословий, герцогов и соседей:]\n${visibleReaction(w)}\n\n[ХОЗЯЙСТВО — казна и дела короны, посчитано кодом:]\n${ecoText(w, true)}\n\n${alreadyText()}${bridge(st)}\n\n${sub(STRAT_EFFECTS)}`;
     } else {
-        prompt = `[ЛЕТОПИСЬ — служебная сводка ведущего для рассказчика. Это истинное текущее состояние мира. Досье важнее стартовых карточек персонажей. Раздел ТАЙНОЕ знает только рассказчик: используй его для предвестий и действий за кадром, но не раскрывай напрямую. Никогда не цитируй и не упоминай Летопись в ответе. Не пересказывай ТАЙНОЕ и сводку устами персонажей: не больше одного предвестия за сцену, NPC не зачитывают списки угроз. Если Летопись расходится с картой ниже, верна карта. Летопись — фон, а не сценарий: всё из ЖУРНАЛА уже произошло и уже показано. Не разыгрывай это заново, не повторяй цифры и доклады; продолжай сцену с последнего сообщения игрока.${st.stale ? ' Летопись сейчас может опережать чат (игрок удалил или переиграл сообщения): если она расходится с чатом, верен чат.' : ''}]\n${GEO}\n\n${timelineText(currentDay())}\nСобытия со статусом ЗАБЛОКИРОВАНО не происходят и не упоминаются как текущие. Раздел УСТАНОВЛЕНО — закреплённые факты игры: имена, места, суммы, цены; повторяй их точно.\n\n${sub(WELL.text)}\n\n${travelNote(WELL.text)}\n\n[РЕАКЦИЯ МИРА — посчитано кодом по показателям страны; тайное, персонажи знают только то, что видели сами. Сословия, герцоги и соседи ведут себя по своей текущей ступени: её проявления уместны в сцене и за кадром, но ничего выше текущей ступени не происходит. Смена ступени — дело недель и месяцев, не одной сцены.]\n${reactionText(w, false)}\n\n[ОТНОШЕНИЯ — посчитано кодом. «Дело» — насколько персонаж верит в правление {{user}} и как работает на {{user}} или против; «лично» — его чувства к {{user}}. Поступки персонажа следуют этим ступеням, а средства и манеру выбирай по его характеру, положению и возможностям из лорбука: кто-то действует открыто, кто-то тихо. Дело и лично могут расходиться. Ступень меняется за дни и недели; одна сцена сдвигает не больше чем на ступень. Незнакомые судят о {{user}} по слухам. Влечение есть только у взрослых, с кем возможен роман; ребёнка никто не обхаживает.]\n${peopleText(w)}\n\n[ХОЗЯЙСТВО — казна и дела короны, посчитано кодом. Суммы и сроки бери отсюда, не выдумывай; товар дела не продаётся раньше, чем сделан и довезён.]\n${ecoText(w, false)}${bridge(st)}\n\n${ANSWER_FORM}`;
+        prompt = `[ЛЕТОПИСЬ — служебная сводка ведущего для рассказчика. Это истинное текущее состояние мира. Досье важнее стартовых карточек персонажей. Раздел ТАЙНОЕ знает только рассказчик: используй его для предвестий и действий за кадром, но не раскрывай напрямую. Никогда не цитируй и не упоминай Летопись в ответе. Не пересказывай ТАЙНОЕ и сводку устами персонажей: не больше одного предвестия за сцену, NPC не зачитывают списки угроз. Если Летопись расходится с картой ниже, верна карта. Летопись — фон, а не сценарий: всё из ЖУРНАЛА уже произошло и уже показано. Не разыгрывай это заново, не повторяй цифры и доклады; продолжай сцену с последнего сообщения игрока.${st.stale ? ' Летопись сейчас может опережать чат (игрок удалил или переиграл сообщения): если она расходится с чатом, верен чат.' : ''}]\n${GEO}\n\n${timelineText(currentDay())}\nСобытия со статусом ЗАБЛОКИРОВАНО не происходят и не упоминаются как текущие. Раздел УСТАНОВЛЕНО — закреплённые факты игры: имена, места, суммы, цены; повторяй их точно.\n\n${sub(WELL.text)}\n\n${travelNote(WELL.text)}\n\n[РЕАКЦИЯ МИРА — посчитано кодом по показателям страны; тайное, персонажи знают только то, что видели сами. Сословия, герцоги и соседи ведут себя по своей текущей ступени: её проявления уместны в сцене и за кадром, но ничего выше текущей ступени не происходит. Смена ступени — дело недель и месяцев, не одной сцены.]\n${reactionText(w, false)}\n\n[ОТНОШЕНИЯ — посчитано кодом. «Дело» — насколько персонаж верит в правление {{user}} и как работает на {{user}} или против; «лично» — его чувства к {{user}}. Поступки персонажа следуют этим ступеням, а средства и манеру выбирай по его характеру, положению и возможностям из лорбука: кто-то действует открыто, кто-то тихо. Дело и лично могут расходиться. Ступень меняется за дни и недели; одна сцена сдвигает не больше чем на ступень. Незнакомые судят о {{user}} по слухам. Влечение есть только у взрослых, с кем возможен роман; ребёнка никто не обхаживает.]\n${peopleText(w)}\n\n[ХОЗЯЙСТВО — казна и дела короны, посчитано кодом. Суммы и сроки бери отсюда, не выдумывай; товар дела не продаётся раньше, чем сделан и довезён.]\n${ecoText(w, false)}${bridge(st)}`;
     }
     c.setExtensionPrompt(MODULE, prompt, 1, INJECT_DEPTH, false, 0);
+    // Короткое напоминание прямо перед ответом: слабые модели забывают правила из глубины сводки.
+    c.setExtensionPrompt(TAIL, st.mode === 'strategy' ? `${sub(STRAT_TAIL)}\n${ANSWER_FORM}` : ANSWER_FORM, 1, 0, false, 0);
 }
 
 function escapeHtml(s) {
@@ -820,6 +843,8 @@ async function onAiMessage(index, type) {
     const c = ctx();
     const msg = c.chat[index];
     if (!msg || msg.is_user || msg.is_system) return;
+    // Пустой ответ (бывает у DeepSeek): не считаем ходом и не зовём Счётчик по пустоте.
+    if (!String(msg.mes || '').trim()) { toastr.warning('Модель вернула пустой ответ — сделайте свайп или повторите ход.'); return; }
     await ensureWell();
     const st = state();
     const s = settings();

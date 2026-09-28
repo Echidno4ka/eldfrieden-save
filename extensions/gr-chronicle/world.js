@@ -48,11 +48,22 @@ function takeResources(parsed) {
 }
 
 // Применить раздел ЭФФЕКТЫ в день `day`. delays: { actor(a), person(id) }. Возвращает то, что не разобрано.
+// Деньги в вольной форме («причина: Казна: −N G — …», «Казна:» строчными) — к строке хозяйства.
+const ECO_LOOSE = /(?:^|:\s*)(казна|сокровищница|ежемесячно)\s*:\s*(.+)$/i;
+const normEco = l => {
+    if (PEOPLE_LINE.test(l) || ECO_LINE.test(l)) return l;
+    const m = l.match(ECO_LOOSE);
+    return m ? `${m[1].toUpperCase()}: ${m[2].trim()}` : l;
+};
+
 export function applyBatch(world, text, day, delays, note = '') {
-    const lines = String(text).split('\n');
+    // «…: Порядок +1; ЧЕРЕЗ 8: …» в одной строке (так пишет DeepSeek) — отложенное с новой строки.
+    const lines = String(text).split('\n').flatMap(l => l.split(/;\s*(?=(?:ЧЕРЕЗ|НА)\s+\d+\s*:)/)).map(normEco);
     const peopleText = lines.filter(l => PEOPLE_LINE.test(l)).join('\n');
     const ecoText = lines.filter(l => ECO_LINE.test(l)).join('\n');
-    const countryText = lines.filter(l => !PEOPLE_LINE.test(l) && !ECO_LINE.test(l)).join('\n');
+    // Денежная строка с показателями в хвосте («СОКРОВИЩНИЦА: продать треть — …: Порядок +1») идёт и в хозяйство, и в показатели.
+    const hasAxes = l => [...l.matchAll(/([А-ЯЁ][а-яё]+(?:·[А-ЯЁа-яё]+)?)\s*[+−-]\s*\d/g)].some(m => m[1] in world.axes);
+    const countryText = lines.filter(l => !PEOPLE_LINE.test(l) && (!ECO_LINE.test(l) || hasAxes(l))).join('\n');
     const parsed = parseEffects(countryText);
     const demandNames = parsed.demand.slice();
     parsed.demand = demandActors(parsed.demand);

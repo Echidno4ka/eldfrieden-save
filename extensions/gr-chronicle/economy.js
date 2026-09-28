@@ -21,7 +21,8 @@ export function fmtG(v) {
     const n = (x, d) => x.toFixed(d).replace('.', ',').replace(/,0+$/, '');
     if (a >= 1e9) return `${s}${n(a / 1e9, 2)} млрд G`;
     if (a >= 1e6) return `${s}${n(a / 1e6, a >= 1e8 ? 0 : 1)} млн G`;
-    return `${s}${String(Math.round(a / 1000) * 1000).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} G`;
+    const r = a >= 10000 ? Math.round(a / 1000) * 1000 : Math.round(a);     // мелкие суммы (жалованье) — без округления до нуля
+    return `${s}${String(r).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} G`;
 }
 function parseG(num, unit) {
     const v = parseFloat(String(num).replace(/[\s ]/g, '').replace(',', '.'));
@@ -80,8 +81,10 @@ export function parseEconomy(text) {
             const sb = (parts.find(p => /^сбыт/i.test(p)) || '').replace(/^сбыт:?\s*/i, '');
             const markets = sb.split(/[,;]\s*/).map(s => s.trim().toLowerCase()).filter(Boolean)
                 .map(s => Object.keys(E.markets).find(k => s.startsWith(k.toLowerCase().slice(0, 4)))).filter(Boolean);
-            if (!name || !kind) { r.unknown.push(line); continue; }
-            r.ent.push({ name, kind, size: size || E.sizes[0], markets: markets.length ? [...new Set(markets)] : ['города'] });
+            // Вид не из списка («шлифовальное»), но размер назван — это мастерская: считаем ремеслом. Без размера — не дело короны.
+            const kindOr = kind || (size && E.templates['ремесло'] ? 'ремесло' : null);
+            if (!name || !kindOr) { r.unknown.push(line); continue; }
+            r.ent.push({ name, kind: kindOr, size: size || E.sizes[0], markets: markets.length ? [...new Set(markets)] : ['города'] });
             continue;
         }
         if (/^ДОЛГ ВОЙСКУ:/.test(line)) { r.armyPay = true; continue; }
@@ -125,6 +128,7 @@ function marketLag(market) {
 const HOARD_REPEAT_DAYS = 96;                                   // вторая продажа за сезон — только явно («ещё», «снова»)
 const HOARD_AGAIN = /ещ[её]|дополнительн|снова|повторн|втор/i;
 const HOARD_PROCEEDS = /сокровищ|ценност|драгоцен|распрода/i;   // выручку от продажи сокровищ код уже зачислил
+const DEBT_NOTE = /дан[ьиью]|долг[а-я]* импери|импери[а-я]* долг|погашени[а-я]* долга/i;
 const entKey = s => String(s).toLowerCase().replace(/ё/g, 'е').replace(/[«»"'„“]/g, '').replace(/\s+/g, ' ').trim();
 
 export function applyEconomy(world, parsed, day, fallback = null, delayActor = () => 1) {
@@ -132,6 +136,13 @@ export function applyEconomy(world, parsed, day, fallback = null, delayActor = (
     const notes = [];
     for (const c of parsed.cash) {
         if (c.g > 0 && eco.lastHoardDay != null && HOARD_PROCEEDS.test(c.note)) { logEco(eco, day, `повтор не учтён: ${fmtG(c.g)} — ${c.note} (выручка сокровищницы уже зачислена)`); notes.push('повтор'); continue; }
+        // Дань или долг, записанные тратой КАЗНА, гасят долг Империи — не больше самого долга (сумму берём из «Меры», не из фантазии).
+        if (c.g < 0 && eco.debt > 0 && DEBT_NOTE.test(c.note)) {
+            const g = Math.min(-c.g, eco.debt);
+            eco.debt -= g; eco.cash -= g;
+            logEco(eco, day, `погашено долга ${fmtG(g)} — ${c.note}${-c.g > g ? ` (записано ${fmtG(-c.g)}, долг был меньше)` : ''}`);
+            continue;
+        }
         eco.cash += c.g; logEco(eco, day, `${fmtG(c.g)} — ${c.note}`);
     }
     for (const h of parsed.hoard) {

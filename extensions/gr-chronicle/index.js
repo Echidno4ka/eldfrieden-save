@@ -4,7 +4,7 @@ import { INITIAL_STATE } from './initial.js';
 
 const MODULE = 'gr_chronicle';
 const NARRATOR = 'Хроники Эльфридена';
-const INJECT_DEPTH = 2;
+const INJECT_DEPTH = 4;
 const MAX_HISTORY = 5;
 const MAX_MESSAGES = 16;
 const MAX_MESSAGE_CHARS = 2000;
@@ -181,7 +181,7 @@ function inject() {
         c.setExtensionPrompt(MODULE, '', 1, INJECT_DEPTH);
         return;
     }
-    const prompt = `[ЛЕТОПИСЬ — служебная сводка ведущего для рассказчика. Это истинное текущее состояние мира. Досье важнее стартовых карточек персонажей. Раздел ТАЙНОЕ знает только рассказчик: используй его для предвестий и действий за кадром, но не раскрывай напрямую. Никогда не цитируй и не упоминай Летопись в ответе. Не пересказывай ТАЙНОЕ и сводку устами персонажей: не больше одного предвестия за сцену, NPC не зачитывают списки угроз. Если Летопись расходится с картой ниже, верна карта.]\n${GEO}\n\n${timelineText(parseDate(data().text))}\nСобытия со статусом ЗАБЛОКИРОВАНО не происходят и не упоминаются как текущие.\n\n${sub(data().text)}`;
+    const prompt = `[ЛЕТОПИСЬ — служебная сводка ведущего для рассказчика. Это истинное текущее состояние мира. Досье важнее стартовых карточек персонажей. Раздел ТАЙНОЕ знает только рассказчик: используй его для предвестий и действий за кадром, но не раскрывай напрямую. Никогда не цитируй и не упоминай Летопись в ответе. Не пересказывай ТАЙНОЕ и сводку устами персонажей: не больше одного предвестия за сцену, NPC не зачитывают списки угроз. Если Летопись расходится с картой ниже, верна карта. Летопись — фон, а не сценарий: всё из ЖУРНАЛА уже произошло и уже показано в чате. Не разыгрывай это заново, не повторяй цифры и доклады; продолжай сцену с последнего сообщения игрока.${data().stale ? ' Летопись сейчас может опережать чат (игрок удалил или переиграл сообщения): если она расходится с чатом, верен чат.' : ''}]\n${GEO}\n\n${timelineText(parseDate(data().text))}\nСобытия со статусом ЗАБЛОКИРОВАНО не происходят и не упоминаются как текущие.\n\n${sub(data().text)}`;
     c.setExtensionPrompt(MODULE, prompt, 1, INJECT_DEPTH, false, 0);
 }
 
@@ -216,6 +216,8 @@ const CHRONICLER = `Ты — Летописец, безликий хронист
 11. География — строго по карте ниже. Если в прежней Летописи место или расстояние противоречит карте, исправь его.
 12. НЕ ВЫДУМЫВАЙ. Каждый факт о персонаже, месте, расстоянии, дате, титуле и имени бери из СПРАВКИ ЛОРБУКА или из событий игры. Если опоры нет — не пиши этот факт или пиши «неизвестно». Если прежняя Летопись противоречит справке, исправь Летопись по справке.
 13. ДАТА не может идти назад и не может прыгнуть дальше, чем реально прошло в сценах.
+14. Каждое число (суммы, войска, расстояния) пиши в Летописи один раз, в самом подходящем разделе; не дублируй его в ЖУРНАЛЕ, ДОСЬЕ и ОТКРЫТЫХ НИТЯХ.
+15. Если в событиях игры цифра или факт изменились (игрок переиграл сцену, персонаж уточнил), бери последнюю версию из событий.
 
 ${GEO}`;
 
@@ -238,7 +240,8 @@ async function update({ manual = false } = {}) {
     updating = true;
     const toast = toastr.info('Летописец обновляет записи…', '', { timeOut: 0, extendedTimeOut: 0 });
     try {
-        const prompt = `ПРЕЖНЯЯ ЛЕТОПИСЬ:\n${sub(d.text)}\n\nНОВЫЕ СОБЫТИЯ ИГРЫ:\n${events}\n\nВыведи обновлённую Летопись целиком.`;
+        const staleNote = d.stale ? '\n\nВНИМАНИЕ: прежняя Летопись могла забежать вперёд — игрок удалил или переиграл часть сообщений. Истина — СОБЫТИЯ ИГРЫ ниже. Убери из Летописи всё, чего в них нет или что им противоречит; дату выставь по событиям (сдвиг назад здесь допустим).' : '';
+        const prompt = `ПРЕЖНЯЯ ЛЕТОПИСЬ:\n${sub(d.text)}\n\nНОВЫЕ СОБЫТИЯ ИГРЫ:\n${events}${staleNote}\n\nВыведи обновлённую Летопись целиком.`;
         const oldDay = parseDate(d.text) ?? SUMMON_DAY;
         const lore = await loreFor(`${d.text}\n${events}`);
         const systemPrompt = `${sub(CHRONICLER)}\n\n${timelineText(oldDay)}\n\nСПРАВКА ЛОРБУКА (истина мира; Летопись не может ей противоречить):\n${lore}`;
@@ -250,7 +253,7 @@ async function update({ manual = false } = {}) {
             return;
         }
         const newDay = parseDate(result);
-        if (newDay !== null && newDay < oldDay) {
+        if (!d.stale && newDay !== null && newDay < oldDay) {
             toastr.warning('Летописец отмотал дату назад. Прежняя Летопись сохранена.');
             return;
         }
@@ -260,9 +263,9 @@ async function update({ manual = false } = {}) {
             toastr.warning(`Летописец запустил «${early}» раньше срока. Прежняя Летопись сохранена.`);
             return;
         }
-        d.history.unshift({ text: d.text, at: d.updatedAt });
-        d.history = d.history.slice(0, MAX_HISTORY);
+        snapshot(d);
         d.text = result;
+        d.stale = false;
         d.lastIndex = c.chat.length - 1;
         d.turns = 0;
         d.updatedAt = new Date().toISOString();
@@ -310,8 +313,7 @@ async function edit() {
         toastr.error('Не сохранено: не хватает одного из разделов или строки ДАТА.');
         return;
     }
-    d.history.unshift({ text: d.text, at: d.updatedAt });
-    d.history = d.history.slice(0, MAX_HISTORY);
+    snapshot(d);
     d.text = value;
     d.updatedAt = new Date().toISOString();
     await save();
@@ -329,6 +331,7 @@ async function undo() {
     }
     d.text = prev.text;
     d.updatedAt = prev.at;
+    if (typeof prev.lastIndex === 'number') d.lastIndex = Math.min(prev.lastIndex, ctx().chat.length - 1);
     await save();
     inject();
     toastr.success('Летопись откатилась на предыдущую версию.');
@@ -345,6 +348,46 @@ async function reset() {
     toastr.success('Летопись сброшена к моменту призыва.');
 }
 
+function snapshot(d) {
+    d.history.unshift({ text: d.text, at: d.updatedAt, lastIndex: d.lastIndex });
+    d.history = d.history.slice(0, MAX_HISTORY);
+}
+
+// Летопись не должна знать о сообщениях, которых в чате больше нет.
+// limit — индекс первого изменённого сообщения (или длина чата после удаления).
+async function rewind(limit) {
+    if (!isOurChat()) return;
+    const d = data();
+    if (d.lastIndex < limit) return;
+    const i = d.history.findIndex(h => typeof h.lastIndex === 'number' && h.lastIndex < limit);
+    if (i >= 0) {
+        const h = d.history[i];
+        d.text = h.text;
+        d.updatedAt = h.at;
+        d.lastIndex = h.lastIndex;
+        d.history = d.history.slice(i + 1);
+        d.stale = false;
+        toastr.info('Летопись откатилась вслед за чатом.');
+    } else {
+        // Подходящей версии нет (старые записи без индекса): сверим с чатом при обновлении.
+        d.lastIndex = Math.max(-1, limit - 1 - MAX_MESSAGES);
+        d.stale = true;
+    }
+    d.turns = 0;
+    await save();
+    inject();
+    if (d.stale) update();
+}
+
+async function onDeleted(newLength) {
+    await rewind(Number(newLength ?? ctx().chat.length));
+}
+
+async function onChangedAt(index) {
+    const i = Number(index);
+    if (Number.isFinite(i)) await rewind(i);
+}
+
 async function onAiMessage(index, type) {
     if (!isOurChat() || !settings().enabled) return;
     if (['first_message', 'swipe', 'regenerate', 'quiet', 'impersonate'].includes(type)) return;
@@ -357,7 +400,10 @@ async function onAiMessage(index, type) {
 }
 
 function onChatChanged() {
-    if (isOurChat()) data();
+    if (isOurChat()) {
+        data();
+        rewind(ctx().chat.length);
+    }
     inject();
 }
 
@@ -403,5 +449,8 @@ jQuery(() => {
     addCommands();
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
     eventSource.on(event_types.MESSAGE_RECEIVED, onAiMessage);
+    eventSource.on(event_types.MESSAGE_DELETED, onDeleted);
+    eventSource.on(event_types.MESSAGE_SWIPED, onChangedAt);
+    eventSource.on(event_types.MESSAGE_EDITED, onChangedAt);
     onChatChanged();
 });

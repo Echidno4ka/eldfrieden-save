@@ -7,7 +7,8 @@
         "NavOpened": "true",
         "StoryStringValidationCache": "{\"hashCache\":{\"3090278210222208\":{\"fieldsWarned\":{}}}}",
         "SelectedNavTab": "rm_button_characters",
-        "WI_PerPage": "10"
+        "WI_PerPage": "10",
+        "default-user_openrouter_code_verifier": "37bb82ca-1561-4b98-be74-91c0baf67506b483b190-7cfa-42e3-80ce-9bc25626a750"
     },
     "currentVersion": "1.19.0",
     "username": "Крупп",

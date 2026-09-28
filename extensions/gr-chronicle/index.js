@@ -1,7 +1,10 @@
 // Летопись Эльфридена: безликий хронист, который ведёт состояние сюжета,
-// досье персонажей и скрытые «часы угроз», и тихо передаёт их рассказчику.
+// досье персонажей и тайное, и тихо передаёт их рассказчику.
+// Реакцию черни, знати, войска, герцогов и соседей считает код («Реакция мира») по показателям, а не Летописец.
 import { INITIAL_STATE } from './initial.js';
 import { MERA } from './mera.data.js';
+import { REACTION } from './reaction.data.js';
+import { initWorld, parseEffects, applyEffects, advance, summary, cloneWorld } from './reaction.js';
 
 const MODULE = 'gr_chronicle';
 const NARRATOR = 'Хроники Эльфридена';
@@ -76,7 +79,7 @@ async function loreFor(scanText) {
     return sub(out.join('\n\n'));
 }
 
-// ---- Календарь и таймлайн: угрозы не наступают раньше своего срока ----
+// ---- Календарь и таймлайн: природные и чужие события не наступают раньше своего срока ----
 const DAYS_IN_YEAR = 384, DAYS_IN_MONTH = 32;
 const SUMMON_DAY = abs(1546, 4, 30);
 
@@ -91,16 +94,11 @@ function parseDate(text) {
     return m ? abs(+m[1], +m[2], +m[3]) : null;
 }
 
-// Сроки из лорбука «Канон · узлы сюжета» и «История». earliest — день, раньше которого событие невозможно.
+// Только события природы и чужих стран, не зависящие от решений двора. Мятежи, бунты, вторжения, ультиматумы
+// здесь не задаются: их ступени считает «Реакция мира». earliest — день, раньше которого событие невозможно.
 const TIMELINE = [
     { name: 'Оползень в Лесу под защитой богов', earliest: SUMMON_DAY + 16,
       rule: 'через несколько недель после призыва и только после затяжных дождей, показанных в сюжете или ЗА КАДРОМ' },
-    { name: 'Окончательное требование Империи', earliest: SUMMON_DAY + 32,
-      rule: 'посол требует ответа не раньше чем через месяц после призыва, если в сюжете не назван другой срок' },
-    { name: 'Открытый мятеж герцогов', earliest: SUMMON_DAY + 64,
-      rule: 'только если власть перешла к чужаку или трон затронул армию; сначала гонцы должны довезти вести (дни пути), потом отказ явиться ко двору, переписка, сбор войск; открытый мятеж — не раньше двух месяцев после призыва' },
-    { name: 'Вторжение Амидонии на Альтомуру', earliest: SUMMON_DAY + 80,
-      rule: 'только после того, как междоусобица в Эльфридене реально началась, и не раньше чем через 16 дней после её начала: 30 000 солдат нужно собрать' },
     { name: 'Буря над хребтом Звёздного Дракона', earliest: abs(1547, 1, 1),
       rule: 'весна 1547 года, ко времени Церемонии контракта' },
     { name: 'Волна монстров на Союз Восточных Государств', earliest: abs(1547, 9, 1),
@@ -113,30 +111,69 @@ function timelineText(day) {
         ? `— ЗАБЛОКИРОВАНО до ${fmt(t.earliest)}: ${t.name}. Условие: ${t.rule}.`
         : `— Возможно с ${fmt(t.earliest)}: ${t.name}. Условие: ${t.rule}.`);
     return `ТЕКУЩАЯ ДАТА: ${fmt(now)} (день ${now - SUMMON_DAY} после призыва)
-ТАЙМЛАЙН КАНОНА (сроки жёсткие):
+ТАЙМЛАЙН КАНОНА (сроки природных и чужих событий жёсткие):
 ${lines.join('\n')}
+— Бунты, мятежи, вторжения, ультиматумы: только по ступеням «Реакции мира», не по датам.
 — Демоны: северный фронт в тупике уже годы, демоны не продвигаются. Никаких нападений демонов или орд монстров на Эльфриден. Отдельные монстры возможны только в подземельях и глуши.`;
 }
 
 // Слова, по которым видно, что Летописец запустил событие раньше срока.
 const LOCK_MARKERS = [
-    { idx: 4, re: /буря|Звёздн[а-яё]* Дракон/i },
-    { idx: 5, re: /волн[аыу] монстр|нашестви|орд[аыу] монстр/i },
-    { idx: 3, re: /Гай[^.\n]{0,40}(выступ|вторг|перешёл|ведёт|осад)|вторжени[ея] Амидони/i },
-    { idx: 2, re: /мятеж|восстал[иа]?|восстани/i },
+    { idx: 1, re: /буря|Звёздн[а-яё]* Дракон/i },
+    { idx: 2, re: /волн[аыу] монстр|нашестви|орд[аыу] монстр/i },
+];
+// Слова тяжёлых реакций и ступень, без которой они невозможны (ступени считает «Реакция мира»).
+const REACTION_MARKERS = [
+    { name: 'Вторжение Амидонии', re: /Гай[^.\n]{0,40}(выступ|вторг|перешёл|ведёт|осад)|вторжени[ея] Амидони/i, ok: w => stageOf(w, 'Амидония') >= 5 },
+    { name: 'Мятеж', re: /мятеж|восстал[иа]?|восстани/i, ok: w => ['чернь', 'знать', 'войско', 'Кармин', 'Уолтер', 'Варгас', 'духовенство'].some(id => stageOf(w, id) >= 4) },
+    { name: 'Ультиматум Империи', re: /ультиматум/i, ok: w => stageOf(w, 'Империя') >= 3 },
 ];
 function journal(text) {
     const m = String(text).match(/ЖУРНАЛ:\s*\n([\s\S]*?)(?=\n===|$)/);
     return m ? m[1] : '';
 }
-function earlyEvent(oldText, newText, day) {
+function earlyEvent(oldText, newText, day, world) {
     const oldJ = journal(oldText), newJ = journal(newText);
     for (const { idx, re } of LOCK_MARKERS) {
         const t = TIMELINE[idx];
         if (day < t.earliest && re.test(newJ) && !re.test(oldJ)) return t.name;
     }
+    for (const m of REACTION_MARKERS) {
+        if (m.re.test(newJ) && !m.re.test(oldJ) && !m.ok(world)) return m.name;
+    }
     return null;
 }
+
+// ---- «Реакция мира»: сословия, герцоги и соседи отвечают на показатели, а не на отдельные события ----
+const EFFECTS = 'ЭФФЕКТЫ';
+const COURIER = MERA.speeds.find(s => s.id === 'courier').kmDay;
+function stageOf(world, id) { return world.removed.includes(id) ? 0 : world.stage[id]?.s ?? 0; }
+// Весть из Парнама доходит до престола актора за дни пути курьера (+1 день на сборы).
+function delayOf(actor) {
+    const from = MERA.places.find(p => p.id === 'parnam');
+    const to = MERA.places.find(p => p.id === actor.seat) || from;
+    return Math.ceil(kmBetween(from, to) / COURIER) + 1;
+}
+function worldOf(d) {
+    if (!d.world) {
+        d.world = initWorld(SUMMON_DAY);
+        advance(d.world, parseDate(d.text) ?? SUMMON_DAY);
+    }
+    return d.world;
+}
+function stripEffects(text) {
+    return String(text).replace(new RegExp(`\\n?===\\s*${EFFECTS}\\s*===[\\s\\S]*?(?=\\n===\\s*[А-ЯЁ ]+\\s*===|$)`), '').trim();
+}
+function reactionText(world) {
+    return summary(world, fmt);
+}
+const AXES_HELP = (() => {
+    const R = REACTION;
+    return `Общие: ${R.common.join(', ')} (Ресурсы — казна и хлеб; Сила — войска короны; Власть — сила трона над провинциями; Порядок — закон и спокойствие на дорогах и в городах; Устои — законность власти и верность обычаю).
+По сословиям: ${R.groupAxes.join(', ')} · ${R.groups.join(' / ')}, пиши «Бремя·чернь» (Достаток — сыты и при деньгах; Бремя — подати и повинности; Статус — права, почёт, место при дворе).
+Герцоги: Статус · ${R.dukes.join(' / ')}, пиши «Статус·Кармин».
+Соседи: ${R.neighborAxes.join(', ')} · ${R.neighbors.join(' / ')}, пиши «Выгода·Империя» (Угроза — насколько Эльфриден угрожает этому соседу; Выгода — что сосед получает от Эльфридена).`;
+})();
 
 const defaults = { every: 4, enabled: true };
 let updating = false;
@@ -225,7 +262,7 @@ function inject() {
         c.setExtensionPrompt(MODULE, '', 1, INJECT_DEPTH);
         return;
     }
-    const prompt = `[ЛЕТОПИСЬ — служебная сводка ведущего для рассказчика. Это истинное текущее состояние мира. Досье важнее стартовых карточек персонажей. Раздел ТАЙНОЕ знает только рассказчик: используй его для предвестий и действий за кадром, но не раскрывай напрямую. Никогда не цитируй и не упоминай Летопись в ответе. Не пересказывай ТАЙНОЕ и сводку устами персонажей: не больше одного предвестия за сцену, NPC не зачитывают списки угроз. Если Летопись расходится с картой ниже, верна карта. Летопись — фон, а не сценарий: всё из ЖУРНАЛА уже произошло и уже показано в чате. Не разыгрывай это заново, не повторяй цифры и доклады; продолжай сцену с последнего сообщения игрока.${data().stale ? ' Летопись сейчас может опережать чат (игрок удалил или переиграл сообщения): если она расходится с чатом, верен чат.' : ''}]\n${GEO}\n\n${timelineText(parseDate(data().text))}\nСобытия со статусом ЗАБЛОКИРОВАНО не происходят и не упоминаются как текущие. Раздел УСТАНОВЛЕНО — закреплённые факты игры: имена, места, суммы, цены; повторяй их точно.\n\n${sub(data().text)}\n\n${travelNote(data().text)}`;
+    const prompt = `[ЛЕТОПИСЬ — служебная сводка ведущего для рассказчика. Это истинное текущее состояние мира. Досье важнее стартовых карточек персонажей. Раздел ТАЙНОЕ знает только рассказчик: используй его для предвестий и действий за кадром, но не раскрывай напрямую. Никогда не цитируй и не упоминай Летопись в ответе. Не пересказывай ТАЙНОЕ и сводку устами персонажей: не больше одного предвестия за сцену, NPC не зачитывают списки угроз. Если Летопись расходится с картой ниже, верна карта. Летопись — фон, а не сценарий: всё из ЖУРНАЛА уже произошло и уже показано в чате. Не разыгрывай это заново, не повторяй цифры и доклады; продолжай сцену с последнего сообщения игрока.${data().stale ? ' Летопись сейчас может опережать чат (игрок удалил или переиграл сообщения): если она расходится с чатом, верен чат.' : ''}]\n${GEO}\n\n${timelineText(parseDate(data().text))}\nСобытия со статусом ЗАБЛОКИРОВАНО не происходят и не упоминаются как текущие. Раздел УСТАНОВЛЕНО — закреплённые факты игры: имена, места, суммы, цены; повторяй их точно.\n\n${sub(data().text)}\n\n${travelNote(data().text)}\n\n[РЕАКЦИЯ МИРА — посчитано кодом по показателям страны; тайное, персонажи знают только то, что видели сами. Сословия, герцоги и соседи ведут себя по своей текущей ступени: её проявления уместны в сцене и за кадром, но ничего выше текущей ступени не происходит. Смена ступени — дело недель и месяцев, не одной сцены.]\n${reactionText(worldOf(data()))}`;
     c.setExtensionPrompt(MODULE, prompt, 1, INJECT_DEPTH, false, 0);
 }
 
@@ -247,7 +284,7 @@ const CHRONICLER = `You are the Chronicler: a faceless bookkeeper of a role-play
 TASK: take the previous Chronicle and the new game events; output the full updated Chronicle.
 
 OUTPUT FORMAT
-- Output ONLY the Chronicle, in Russian, in exactly the same format with the same three sections: === СОСТОЯНИЕ ===, === ДОСЬЕ ===, === ТАЙНОЕ ===. No explanations, no prose, no dialogue, no preamble.
+- Output ONLY the Chronicle, in Russian, in exactly the same format with the same sections: === СОСТОЯНИЕ ===, === ДОСЬЕ ===, === ТАЙНОЕ ===, === УСТАНОВЛЕНО ===, and last === ЭФФЕКТЫ === (see WORLD STATE). No explanations, no prose, no dialogue, no preamble.
 - Keep the whole Chronicle under 900 words. Write every number (sums, troops, distances) once, in the most fitting section; do not repeat it in ЖУРНАЛ, ДОСЬЕ or ОТКРЫТЫЕ НИТИ.
 - ЖУРНАЛ: one short dated line per significant event; keep the last 15 lines, compress older ones into "Ранее: …".
 - A fourth section === УСТАНОВЛЕНО === goes last: the registry of facts first stated in play — new people (name, role), new places (with a distance to the nearest known place), sums, prices, numbered promises. One line per fact. Never delete or rephrase a line (the code restores deleted lines); if play explicitly retcons a fact, add a new line "Исправлено: …".
@@ -267,10 +304,13 @@ FACTS
 
 WORLD STATE
 - Change scales, reforms and relationships only because of events; give a reason for every relationship change. Reforms move through стадии: идея → принята → внедряется N% → действует; they need money, people and time and have opponents.
-- THREAT CLOCKS follow the TIMELINE (section "ТАЙМЛАЙН КАНОНА"). A clock marked ЗАБЛОКИРОВАНО cannot fire even when full: hold it at the last segment until its date. Move clocks mainly by concrete events; time alone moves a clock by at most 1 segment per 16 days. Preconditions come first (news delivered, troops gathered, rains fell). Add a new clock only for a threat that has already appeared in play, with a realistic date.
+- Natural and foreign events follow the TIMELINE (section "ТАЙМЛАЙН КАНОНА"); an event marked ЗАБЛОКИРОВАНО cannot happen before its date.
+- WORLD REACTION (section "РЕАКЦИЯ МИРА") is computed by code: the commoners, clergy, nobility, army, dukes and neighbours each sit on a stage of their ladder. Never write threat clocks or moods of these actors yourself, and never record in ЖУРНАЛ or ЗА КАДРОМ an action above an actor's current stage (no revolt, rebellion, invasion or ultimatum unless its stage has been reached). Show the current stage off-screen when it fits.
+- EFFECTS: after the Chronicle add a section === ЭФФЕКТЫ === listing how the decisions and events of THIS batch shifted the country's abstract indicators, one line per decision: "<short cause>: Ось ±n; Ось ±n". n is 1 (noticeable), 2 (strong) or 3 (drastic); indicators are −5…+5, 0 is normal. Only decisions that actually took effect in play (an edict announced, taxes collected, troops paid, a treaty signed), not plans or talk. A rumour or plan is 0. If a duke's house is abolished by unification, write "УПРАЗДНИТЬ: <duke>". If nothing shifted, write "нет". Use ONLY these indicators:
+${AXES_HELP}
 - ЗА КАДРОМ: advance the agendas of absent characters and factions according to their goals and character, limited by the speed of couriers and marches.
 - ДОСЬЕ: only characters who appeared in play or act off-screen. For each: Где, Состояние, Отношение к {{user}} (number and reason), Знает о {{user}}, Обещания и долги, Сейчас занят, Изменилось. Move the dead to a line "Выбыли". Characters know only what they saw or heard.
-- СОСТОЯНИЕ holds only what {{user}} and the court know. Everything {{user}} does not know (true motives, hidden moves, threat clocks) goes to ТАЙНОЕ.
+- СОСТОЯНИЕ holds only what {{user}} and the court know. Everything {{user}} does not know (true motives, hidden moves) goes to ТАЙНОЕ.
 
 ${GEO}`;
 
@@ -297,9 +337,11 @@ async function update({ manual = false } = {}) {
         const prompt = `ПРЕЖНЯЯ ЛЕТОПИСЬ:\n${sub(d.text)}\n\nНОВЫЕ СОБЫТИЯ ИГРЫ:\n${events}${staleNote}\n\nВыведи обновлённую Летопись целиком.`;
         const oldDay = parseDate(d.text) ?? SUMMON_DAY;
         const lore = await loreFor(`${d.text}\n${events}`);
-        const systemPrompt = `${sub(CHRONICLER)}\n\n${timelineText(oldDay)}\n\nСПРАВКА ЛОРБУКА (истина мира; Летопись не может ей противоречить):\n${lore}`;
-        let result = await c.generateRaw({ prompt, systemPrompt, responseLength: 2000 });
+        const systemPrompt = `${sub(CHRONICLER)}\n\n${timelineText(oldDay)}\n\nРЕАКЦИЯ МИРА (посчитано кодом на ${fmt(worldOf(d).lastDay)}):\n${reactionText(worldOf(d))}\n\nСПРАВКА ЛОРБУКА (истина мира; Летопись не может ей противоречить):\n${lore}`;
+        let result = await c.generateRaw({ prompt, systemPrompt, responseLength: 2400 });
         result = String(result ?? '').trim().replace(/^```[a-z]*\n?|```$/g, '').trim();
+        const effectsText = section(result, EFFECTS);
+        result = stripEffects(result);
         if (!valid(result)) {
             console.warn('[Летопись] Ответ не прошёл проверку формата:', result);
             toastr.warning('Летописец вернул запись в неверном формате. Прежняя Летопись сохранена; попробую при следующем обновлении.');
@@ -310,14 +352,22 @@ async function update({ manual = false } = {}) {
             toastr.warning('Летописец отмотал дату назад. Прежняя Летопись сохранена.');
             return;
         }
-        const early = earlyEvent(d.text, result, newDay ?? oldDay);
+        // Решения этой пачки сдвигают показатели в день новой записи; вести расходятся со скоростью курьера.
+        const day = Math.max(newDay ?? oldDay, worldOf(d).lastDay);
+        const world = cloneWorld(worldOf(d));
+        const parsed = parseEffects(effectsText);
+        if (parsed.unknown.length) console.warn('[Летопись] Неизвестные показатели отброшены:', parsed.unknown);
+        applyEffects(world, parsed, day, delayOf, effectsText.slice(0, 300));
+        advance(world, day);
+        const early = earlyEvent(d.text, result, newDay ?? oldDay, world);
         if (early) {
             console.warn('[Летопись] Событие раньше срока:', early, result);
-            toastr.warning(`Летописец запустил «${early}» раньше срока. Прежняя Летопись сохранена.`);
+            toastr.warning(`Летописец запустил «${early}» раньше, чем мир к этому пришёл. Прежняя Летопись сохранена.`);
             return;
         }
         if (!d.stale) result = keepRegistry(d.text, result);
         snapshot(d);
+        d.world = world;
         d.text = result;
         d.stale = false;
         d.lastIndex = c.chat.length - 1;
@@ -347,6 +397,11 @@ async function show(name, title) {
     const d = data();
     let body = section(sub(d.text), name) || '—';
     if (name === 'СОСТОЯНИЕ') { const reg = section(sub(d.text), REGISTRY); if (reg) body += '\n\nУСТАНОВЛЕНО\n' + reg; }
+    if (name === 'ТАЙНОЕ') {
+        const w = worldOf(d);
+        const log = w.log.slice(-8).map(e => `${fmt(e.day)}: ${Object.entries(e.deltas).map(([k, v]) => `${k} ${v > 0 ? '+' : '−'}${Math.abs(v)}`).join('; ')}${e.remove.length ? ' · упразднены: ' + e.remove.join(', ') : ''}`);
+        body += `\n\nРЕАКЦИЯ МИРА (на ${fmt(w.lastDay)})\n${reactionText(w)}${log.length ? '\n\nПОСЛЕДНИЕ СДВИГИ\n' + log.join('\n') : ''}`;
+    }
     const when = d.updatedAt ? new Date(d.updatedAt).toLocaleString('ru-RU') : 'стартовое состояние';
     const html = `<h3 class="gr-chronicle-title">${title}</h3><div class="gr-chronicle-meta">Обновлено: ${when} · ответов до обновления: ${Math.max(0, settings().every - d.turns)}</div><pre class="gr-chronicle-view">${escapeHtml(body)}</pre>`;
     await ctx().callGenericPopup(html, ctx().POPUP_TYPE.TEXT, '', { wide: true, large: true, allowVerticalScrolling: true });
@@ -354,7 +409,7 @@ async function show(name, title) {
 
 async function showSecrets() {
     const c = ctx();
-    const ok = await c.callGenericPopup('<h3>Показать тайное?</h3><p>Здесь скрытые ходы персонажей, часы угроз и то, чего ваш герой не знает. Это спойлеры к вашей же игре.</p>', c.POPUP_TYPE.CONFIRM, '', { okButton: 'Показать', cancelButton: 'Не надо' });
+    const ok = await c.callGenericPopup('<h3>Показать тайное?</h3><p>Здесь скрытые ходы персонажей, реакция сословий и соседей и то, чего ваш герой не знает. Это спойлеры к вашей же игре.</p>', c.POPUP_TYPE.CONFIRM, '', { okButton: 'Показать', cancelButton: 'Не надо' });
     if (ok === c.POPUP_RESULT.AFFIRMATIVE) await show('ТАЙНОЕ', 'Тайное');
 }
 
@@ -386,6 +441,7 @@ async function undo() {
     }
     d.text = prev.text;
     d.updatedAt = prev.at;
+    if (prev.world) d.world = prev.world;
     if (typeof prev.lastIndex === 'number') d.lastIndex = Math.min(prev.lastIndex, ctx().chat.length - 1);
     await save();
     inject();
@@ -397,14 +453,14 @@ async function reset() {
     const c = ctx();
     const ok = await c.callGenericPopup('<h3>Сбросить Летопись?</h3><p>Состояние вернётся к моменту призыва. Используйте только для новой игры.</p>', c.POPUP_TYPE.CONFIRM, '', { okButton: 'Сбросить', cancelButton: 'Отмена' });
     if (ok !== c.POPUP_RESULT.AFFIRMATIVE) return;
-    c.chatMetadata[MODULE] = { text: INITIAL_STATE, turns: 0, lastIndex: c.chat.length - 1, updatedAt: null, history: [] };
+    c.chatMetadata[MODULE] = { text: INITIAL_STATE, turns: 0, lastIndex: c.chat.length - 1, updatedAt: null, history: [], world: initWorld(SUMMON_DAY) };
     await save();
     inject();
     toastr.success('Летопись сброшена к моменту призыва.');
 }
 
 function snapshot(d) {
-    d.history.unshift({ text: d.text, at: d.updatedAt, lastIndex: d.lastIndex });
+    d.history.unshift({ text: d.text, at: d.updatedAt, lastIndex: d.lastIndex, world: cloneWorld(worldOf(d)) });
     d.history = d.history.slice(0, MAX_HISTORY);
 }
 
@@ -420,6 +476,7 @@ async function rewind(limit) {
         d.text = h.text;
         d.updatedAt = h.at;
         d.lastIndex = h.lastIndex;
+        if (h.world) d.world = h.world;
         d.history = d.history.slice(i + 1);
         d.stale = false;
         toastr.info('Летопись откатилась вслед за чатом.');

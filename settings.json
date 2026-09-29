@@ -3,15 +3,15 @@
     "accountStorage": {
         "__migrated": "1",
         "WINavOpened": "true",
-        "LNavOpened": "false",
-        "NavOpened": "true",
+        "LNavOpened": "true",
+        "NavOpened": "false",
         "StoryStringValidationCache": "{\"hashCache\":{\"3090278210222208\":{\"fieldsWarned\":{}}}}",
         "SelectedNavTab": "rm_button_characters",
         "WI_PerPage": "10"
     },
     "currentVersion": "1.19.0",
     "username": "Крупп",
-    "active_character": "Кабинет Эльфридена.png",
+    "active_character": "Хроники Эльфридена.png",
     "active_group": null,
     "user_avatar": "user-default.png",
     "amount_gen": 350,
@@ -24,7 +24,8 @@
                 "ГР — Военное дело",
                 "ГР — Государства",
                 "ГР — Персонажи · Амидония",
-                "ГР — Персонажи · Империя"
+                "ГР — Персонажи · Империя",
+                "ГР — Экономика"
             ],
             "charLore": [
                 {
@@ -1173,7 +1174,7 @@
         "custom_include_body": "",
         "custom_exclude_body": "",
         "custom_include_headers": "",
-        "openrouter_model": "deepseek/deepseek-v4-pro-0813",
+        "openrouter_model": "deepseek/deepseek-v4.1-flash",
         "openrouter_use_fallback": true,
         "openrouter_providers": [
             "DeepSeek"
@@ -1216,12 +1217,12 @@
         "extensions": {}
     },
     "background": {
-        "name": "bedroom clean.jpg",
-        "url": "url(\"backgrounds/bedroom%20clean.jpg\")",
-        "fitting": "classic",
+        "name": "royal.jpg",
+        "url": "url(\"backgrounds/royal.jpg\")",
+        "fitting": "cover",
         "animation": false,
         "sortOrder": "az",
-        "thumbnailColumns": 5
+        "thumbnailColumns": 3
     },
     "proxies": [
         {

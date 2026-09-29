@@ -3,8 +3,8 @@
     "accountStorage": {
         "__migrated": "1",
         "WINavOpened": "true",
-        "LNavOpened": "true",
-        "NavOpened": "false",
+        "LNavOpened": "false",
+        "NavOpened": "true",
         "StoryStringValidationCache": "{\"hashCache\":{\"3090278210222208\":{\"fieldsWarned\":{}}}}",
         "SelectedNavTab": "rm_button_characters",
         "WI_PerPage": "10"
@@ -1173,7 +1173,7 @@
         "custom_include_body": "",
         "custom_exclude_body": "",
         "custom_include_headers": "",
-        "openrouter_model": "~google/gemini-flash-latest",
+        "openrouter_model": "deepseek/deepseek-v4-pro-0813",
         "openrouter_use_fallback": true,
         "openrouter_providers": [
             "DeepSeek"
@@ -1202,7 +1202,7 @@
         "tool_call_recurse_limit": 5,
         "names_behavior": 0,
         "continue_postfix": " ",
-        "custom_prompt_post_processing": "",
+        "custom_prompt_post_processing": "semi_tools",
         "show_thoughts": false,
         "reasoning_effort": "min",
         "verbosity": "auto",

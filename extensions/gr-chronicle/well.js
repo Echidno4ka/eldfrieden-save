@@ -63,13 +63,17 @@ function b64(s) {
     for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
     return btoa(bin);
 }
+// null — колодца ещё нет (новая игра или перенос старой Летописи). Любая другая беда — исключение:
+// нельзя принять сбой чтения за «колодца нет» и записать поверх игры новый мир.
 export async function loadWell() {
-    try {
-        const r = await fetch(`/user/files/${WELL_FILE}?t=${Date.now()}`, { cache: 'no-store' });
-        if (!r.ok) return null;
-        const w = await r.json();
-        return w && w.v === WELL_VERSION ? w : null;
-    } catch { return null; }
+    const r = await fetch(`/user/files/${WELL_FILE}?t=${Date.now()}`, { cache: 'no-store' });
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error(`колодец не прочитан (ответ сервера ${r.status})`);
+    let w;
+    try { w = await r.json(); } catch { throw new Error('файл колодца повреждён'); }
+    if (!w || typeof w !== 'object' || !w.world || !Array.isArray(w.batches)) throw new Error('файл колодца повреждён');
+    if (w.v !== WELL_VERSION) throw new Error(`колодец другой версии (${w.v}), расширение ждёт ${WELL_VERSION}`);
+    return w;
 }
 export async function saveWell(well, headers) {
     const r = await fetch('/api/files/upload', { method: 'POST', headers, body: JSON.stringify({ name: WELL_FILE, data: b64(JSON.stringify(well)) }) });

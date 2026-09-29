@@ -88,6 +88,8 @@ function Save-Game([string]$message = 'Сохранение') {
             Git push -q origin main | Out-Null
             Say 'Облако обновлено.' 'Green'
         } catch {
+            # Сорванная выгрузка не должна оставлять хранилище посреди rebase (как и на телефоне).
+            & $Git -C $Data rebase --abort 2>$null | Out-Null
             Say "Не удалось выгрузить в облако: $($_.Exception.Message)" 'Yellow'
             Say 'Локально всё сохранено. Попробуйте позже или запустите Загрузить.bat, чтобы разобрать расхождение.' 'Yellow'
         }

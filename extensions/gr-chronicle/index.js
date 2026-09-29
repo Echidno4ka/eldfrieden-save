@@ -317,10 +317,23 @@ function migrateOrNew() {
     return newWell(INITIAL_STATE, freshWorld());
 }
 const untouched = w => !w.batches.length && !w.history.length && w.checkpoint.n === 0 && w.text === INITIAL_STATE;
+let loadWarnedAt = 0;
+// Колодец или null. Новый мир заводится только если файла действительно нет; при сбое чтения (сервер, сеть,
+// битый файл) Летопись ничего не пишет — иначе затёрла бы игру — и попробует снова при следующем событии.
 async function ensureWell() {
     if (WELL) return WELL;
     if (!loading) loading = (async () => {
-        let w = await loadWell();
+        let w;
+        try { w = await loadWell(); }
+        catch (e) {
+            console.error('[Летопись] колодец не прочитан — сохранённая игра не тронута', e);
+            if (Date.now() - loadWarnedAt > 30000) {
+                loadWarnedAt = Date.now();
+                toastr.error(`Летопись: ${e.message}. Чтобы не затереть игру, Летопись ничего не записывает. Перезагрузите страницу; если не поможет — «Загрузить» из облака.`);
+            }
+            loading = null;
+            return null;
+        }
         const fresh = !w;
         if (!w) w = migrateOrNew();
         upgrade(w.world);
@@ -355,16 +368,20 @@ function markChat() {
 
 // Зафиксировать пачку эффектов этого чата (после сообщения idx) в день `day`.
 const lineKey = l => l.toLowerCase().replace(/ё/g, 'е').replace(/[«»"']/g, '').replace(/\s+/g, ' ').trim();
+// Команды — действия, а не пересказ: повторная выплата войску, новое требование, ещё одна продажа законны,
+// а от задвоений их берегут свои стражи (казна, сокровищница, дела). Отсев повторов их не трогает.
+const COMMAND_LINE = /^\s*(ДОЛГ ВОЙСКУ|ДОЛГ|ТРЕБОВАНИЕ|СОКРОВИЩНИЦА|ЗНАКОМСТВО|УПРАЗДНИТЬ|ДЕЛО ЗАКРЫТЬ|ДЕЛО)\s*:/i;
 // Убрать из пачки пустые строки «решение: нет» и дословные повторы строк из недавних пачек (доклады их пересказывают).
 function dropRepeats(text) {
     const seen = new Set(WELL.batches.slice(-ALREADY_BATCHES).flatMap(b => String(b.text).split('\n').map(lineKey)).filter(Boolean));
     const lines = String(text).split('\n').map(s => s.trim()).filter(Boolean);
-    const kept = lines.filter(l => !/:\s*нет\.?$/i.test(l) && !seen.has(lineKey(l)) && !(lines.length > 1 && /^нет\.?$/i.test(l)));
+    const kept = lines.filter(l => !/:\s*нет\.?$/i.test(l) && (COMMAND_LINE.test(l) || !seen.has(lineKey(l))) && !(lines.length > 1 && /^нет\.?$/i.test(l)));
     const dropped = lines.length - kept.length;
     if (dropped && !(lines.length === 1 && /^нет\.?$/i.test(lines[0]))) console.warn(`[Летопись] Отброшено строк-повторов и «: нет»: ${dropped}`);
     return kept.join('\n');
 }
-function commit(effectsText, day, idx) {
+// id — чат, чьи это события (запоминается до обращения к модели: игрок мог уже перейти в другой чат).
+function commit(effectsText, day, idx, id = chatId()) {
     const text = dropRepeats(String(effectsText || '').trim()).trim();
     if (!text || /^нет\.?$/i.test(text)) return null;       // время идёт в дате Летописи; мир доживёт его в view()
     const seats = seatsNow(WELL.text);
@@ -380,7 +397,7 @@ function commit(effectsText, day, idx) {
     if (r.resourcesWritten) console.warn('[Летопись] «Ресурсы» вместо суммы — переведено в деньги по курсу «Меры мира».');
     WELL.world = w;
     VIEW = null;
-    addBatch(WELL, { chat: chatId(), idx, day: w.lastDay, text, seats, prev }, delaysOf);
+    addBatch(WELL, { chat: id, idx, day: w.lastDay, text, seats, prev }, delaysOf);
     return r;
 }
 // Дату и место ведёт Счётчик (или стратег); в тексте Летописи код правит их сам.
@@ -488,7 +505,7 @@ MONEY (section "ХОЗЯЙСТВО", computed by code). Never write "Ресур�
   "ДЕЛО: <name> · <ремесло|мануфактура|промысел|торговля> · <малое|среднее|большое> · сбыт: <знать, города, Зем, Амидония, Империя, Тургис, Лунария, Союз>" (the crown starts an enterprise; the code computes cost, time, output and sales); "ДЕЛО ЗАКРЫТЬ: <name>".
   Taxes (Бремя·чернь), famine and disorder change the crown's income by themselves. An enterprise sells nothing before the date in ХОЗЯЙСТВО.
 PEOPLE (computed by code): for the tracked characters add lines whenever the events touched them personally: "<name>: Доверие ±n; Приязнь ±n — <reason>". Доверие = do they believe in {{user}}'s rule (competence, fairness, respect for their office and people); Приязнь = personal feeling. They can move apart: a humiliated but competent ruler loses Приязнь, not Доверие. n is 1 (a word, a small favour or slight), 2 (a real service, a public slight, a broken promise), 3 (saving a life or honour, a betrayal, a humiliation before everyone). The effects of national policy on them are counted by the code from their interests; do not duplicate them. Write "ЗНАКОМСТВО: <name>" when {{user}} meets a tracked character for the first time. "ТРЕБОВАНИЕ: <name>" also works for tracked characters. Tracked: ${PEOPLE.people.map(p => p.name).join(', ')}.
-  GESTURES — small signs of attention: "ЖЕСТ: <name> · <kind>[ · <what>][ · <sum> G][ · наедине] — <what happened>", kinds: комплимент, флирт, подарок, внимание (time, talk, care), совет (asking their advice), дело (helping their cause or people). Example: "ЖЕСТ: Томоэ · подарок · сладости · 300 G — купил на рынке". The code weighs them by tastes, by the gift's price against rank, and repeated gestures count less; do not add Доверие/Приязнь for the same gesture. The sum in a gesture is paid from the treasury by the code — do not add КАЗНА for it. "наедине" = nobody else saw it. Влечение (romance) exists only for adults free for romance in canon; write "<name>: Влечение ±n — reason" only for big romantic turns. Tomoe is a child: no romance, no flirting, ever.
+  GESTURES — small signs of attention: "ЖЕСТ: <name> · <kind>[ · <what>][ · <sum> G][ · наедине] — <what happened>", kinds: комплимент, флирт, подарок, внимание (time, talk, care), совет (asking their advice), дело (helping their cause or people). Example: "ЖЕСТ: Томоэ · подарок · сладости · 300 G — куплены на рынке". The code weighs them by tastes, by the gift's price against rank, and repeated gestures count less; do not add Доверие/Приязнь for the same gesture. The sum in a gesture is paid from the treasury by the code — do not add КАЗНА for it. "наедине" = nobody else saw it. Влечение (romance) exists only for adults free for romance in canon; write "<name>: Влечение ±n — reason" only for big romantic turns. Tomoe is a child: no romance, no flirting, ever.
 REPUTATION of {{user}} (what people say beyond the witnesses; spreads with couriers): "РЕПУТАЦИЯ: Слово ±n; Сила ±n; Честь ±n; Милость ±n — <reason>" for deeds that will be talked about. Слово — keeps promises, oaths, treaties and debts; Сила — is feared, orders are carried out, victories and defeats; Честь — dignity by custom: courtesy, lineage, humiliations suffered or inflicted, marriage and precedence; Милость — mercy and generosity to the weak, or cruelty. n is 1 (talk of the town), 2 (talk of the country), 3 (a deed remembered for a generation). One deed may touch several facets in opposite ways (a harsh execution: Сила +1; Милость −2). The code already counts unpaid army, loans repaid, refused debts and answers to ТРЕБОВАНИЕ — do not write those. Reputation is not an indicator: never write it as "Репутация·… ±n" elsewhere.`;
 
 const TIME_RULES = `TIME (most important)
@@ -566,9 +583,10 @@ function transcript(fromIndex, toIndex = null) {
 const staleNote = '\n\nВНИМАНИЕ: прежняя Летопись могла забежать вперёд — игрок удалил или переиграл часть сообщений этого чата. Истина — СОБЫТИЯ ИГРЫ ниже и события другого чата, уже записанные в Летописи. Убери из Летописи то, что было только в удалённых сообщениях этого чата.';
 
 // ---- Счётчик ----
-async function count({ manual = false } = {}) {
-    const c = ctx(), st = state();
-    const events = transcript(st.countIdx);
+// job — что считать, запомненное до обращения к модели: { st, id, end, countEvents, chronEvents } (см. runCycle).
+async function count(job, { manual = false } = {}) {
+    const { st, id, end } = job;
+    const events = job.countEvents;
     if (!events.trim()) { if (manual) toastr.info('Нет новых событий для счёта.'); return false; }
     const w = view();
     const oldDay = currentDay();
@@ -581,17 +599,17 @@ async function count({ manual = false } = {}) {
         .map(s => String(s || '').trim()).filter(s => s && !/^нет\.?$/i.test(s)).join('\n');
     let day = parseDate(raw) ?? oldDay;
     if (day < oldDay) day = oldDay;                    // время только вперёд
-    commit(effects, day, c.chat.length - 1);
+    commit(effects, day, end, id);
     WELL.text = setDatePlace(WELL.text, Math.max(day, WELL.world.lastDay), placeLine(raw));
-    st.countIdx = c.chat.length - 1;
+    st.countIdx = end;
     st.turns = 0;
     return true;
 }
 
 // ---- Хроникёр ----
-async function chronicle({ manual = false } = {}) {
-    const c = ctx(), st = state();
-    const events = transcript(st.chronIdx);
+async function chronicle(job, { manual = false } = {}) {
+    const { st, id, end } = job;
+    const events = job.chronEvents;
     if (!events.trim()) { if (manual) toastr.info('Нет новых событий для Летописи.'); return false; }
     const w = view();
     const day = currentDay(), place = currentPlace();
@@ -623,27 +641,31 @@ async function chronicle({ manual = false } = {}) {
     }
     let result = got.result;
     if (!st.stale) result = keepRegistry(WELL.text, result);
-    pushText(WELL, { text: WELL.text, at: WELL.updatedAt, chat: chatId(), idx: c.chat.length - 1, seq: WELL.seq });
+    pushText(WELL, { text: WELL.text, at: WELL.updatedAt, chat: id, idx: end, seq: WELL.seq });
     WELL.text = result;
     WELL.updatedAt = new Date().toISOString();
-    st.chronIdx = c.chat.length - 1;
+    st.chronIdx = end;
     st.chronTurns = 0;
     st.stale = false;
     return true;
 }
 
 // Одна очередь: Счётчик, затем (если пора) Хроникёр.
+// Чат, его указатели и расшифровки событий запоминаются ДО обращения к модели: пока модель думает (Хроникёр — до минуты),
+// игрок может перейти в другой чат, а Таверна подменяет содержимое чата на месте. Считаем то, что было.
 async function runCycle({ manual = false, counter = true, chron = false } = {}) {
     if (!isOurChat()) { toastr.info('Летопись ведётся только в чатах «Хроники Эльфридена» и «Кабинет Эльфридена».'); return; }
     if (busy) { if (manual) toastr.info('Летопись уже обновляется.'); return; }
-    await ensureWell();
     busy = true;
-    const toast = toastr.info('Летописец обновляет записи…', '', { timeOut: 0, extendedTimeOut: 0 });
+    let toast = null;
     try {
-        if (counter) await count({ manual });
-        if (chron) await chronicle({ manual });
+        if (!(await ensureWell()) || !isOurChat()) return;
+        const st = state(), id = chatId(), end = ctx().chat.length - 1;
+        const job = { st, id, end, countEvents: counter ? transcript(st.countIdx, end) : '', chronEvents: chron ? transcript(st.chronIdx, end) : '' };
+        toast = toastr.info('Летописец обновляет записи…', '', { timeOut: 0, extendedTimeOut: 0 });
+        if (counter) await count(job, { manual });
+        if (chron) await chronicle(job, { manual });
         // Свои события этот чат знает из собственной истории — мост ему не нужен (он для другого чата).
-        const st = state();
         st.seenDay = currentDay();
         st.seenJournal = journalLines(WELL.text);
         st.fresh = false;
@@ -655,7 +677,7 @@ async function runCycle({ manual = false, counter = true, chron = false } = {}) 
         toastr.error(`Летопись не обновлена: ${err?.message || err}. Проверьте подключение к модели.`);
     } finally {
         busy = false;
-        toastr.clear(toast);
+        if (toast) toastr.clear(toast);
     }
 }
 
@@ -668,7 +690,7 @@ function extractBlock(mes) {
     return { clean: String(mes).slice(0, m.index).trim(), effects, day: parseDate(body), place: placeLine(body) };
 }
 async function onStrategyReply(index) {
-    const c = ctx(), st = state();
+    const c = ctx(), st = state(), id = chatId();
     const msg = c.chat[index];
     const swipe = msg.swipe_id ?? 0;
     let fx = extractBlock(msg.mes);
@@ -686,10 +708,10 @@ async function onStrategyReply(index) {
     } else if (msg.extra?.gr_fx?.[swipe]) {
         fx = msg.extra.gr_fx[swipe];
     }
-    if (!fx) { await runCycle({ counter: true }); return; }       // стратег забыл блок — посчитает Счётчик
+    if (!fx) { if (chatId() === id) await runCycle({ counter: true }); return; }   // стратег забыл блок — посчитает Счётчик
     let day = fx.day ?? currentDay();
     if (day < currentDay()) day = currentDay();
-    commit(fx.effects, day, index);
+    commit(fx.effects, day, index, id);
     WELL.text = setDatePlace(WELL.text, Math.max(day, WELL.world.lastDay), fx.place);
     st.countIdx = index;
 }
@@ -721,7 +743,7 @@ function escapeHtml(s) {
 
 async function show(name, title) {
     if (!isOurChat()) { toastr.info('Летопись ведётся только в чатах «Хроники Эльфридена» и «Кабинет Эльфридена».'); return; }
-    await ensureWell();
+    if (!(await ensureWell())) return;
     const st = state();
     let body = section(sub(WELL.text), name) || '—';
     if (name === 'СОСТОЯНИЕ') {
@@ -753,7 +775,7 @@ async function showSecrets() {
 
 async function edit() {
     if (!isOurChat()) return;
-    await ensureWell();
+    if (!(await ensureWell())) return;
     const c = ctx();
     const value = await c.callGenericPopup('<h3>Правка Летописи</h3><p>Сохраните разделы с заголовками === СОСТОЯНИЕ ===, === ДОСЬЕ ===, === ТАЙНОЕ ===. Летопись общая для «Хроник» и «Кабинета».</p>', c.POPUP_TYPE.INPUT, WELL.text, { rows: 25, wide: true, large: true, okButton: 'Сохранить', cancelButton: 'Отмена' });
     if (typeof value !== 'string' || value === WELL.text) return;
@@ -769,7 +791,7 @@ async function edit() {
 // Откатить последнюю версию текста Летописи и пачки этого чата, сделанные после неё.
 async function undo() {
     if (!isOurChat()) return;
-    await ensureWell();
+    if (!(await ensureWell())) return;
     const prev = WELL.history.shift();
     if (!prev) { toastr.info('Откатывать некуда.'); return; }
     WELL.text = prev.text;
@@ -830,7 +852,7 @@ async function rewind(limit) {
     if (removed.length || restored) toastr.info('Летопись откатилась вслед за чатом.');
     await persist();
     inject();
-    if (st.stale) runCycle({ counter: true, chron: true });
+    if (st.stale && chatId() === id) runCycle({ counter: true, chron: true });
 }
 
 async function onDeleted(newLength) {
@@ -840,7 +862,9 @@ async function onDeleted(newLength) {
 async function onChangedAt(index) {
     const i = Number(index);
     if (!Number.isFinite(i)) return;
+    const id = chatId();
     await rewind(i);
+    if (chatId() !== id) return;                                  // пока откатывали, игрок ушёл в другой чат
     // Стратег: свайп на уже виденный вариант — его эффекты хранятся при сообщении.
     const msg = ctx().chat[i];
     if (WELL && modeOf() === 'strategy' && msg && !msg.is_user && msg.extra?.gr_fx?.[msg.swipe_id ?? 0]) {
@@ -858,19 +882,22 @@ async function onAiMessage(index, type) {
     if (!msg || msg.is_user || msg.is_system) return;
     // Пустой ответ (бывает у DeepSeek): не считаем ходом и не зовём Счётчик по пустоте.
     if (!String(msg.mes || '').trim()) { toastr.warning('Модель вернула пустой ответ — сделайте свайп или повторите ход.'); return; }
-    await ensureWell();
+    const id = chatId();
+    if (!(await ensureWell()) || chatId() !== id) return;          // колодец не прочитан или чат уже сменился
     const st = state();
     const s = settings();
+    // Цикл Летописи — только если игрок всё ещё в этом чате (иначе посчитается при следующем ответе здесь).
+    const here = () => chatId() === id;
     if (st.mode === 'strategy') {
         await onStrategyReply(index);
         st.chronTurns = (st.chronTurns || 0) + 1;
-        if (st.chronTurns >= s.stratChronEvery) await runCycle({ counter: false, chron: true });
+        if (st.chronTurns >= s.stratChronEvery && here()) await runCycle({ counter: false, chron: true });
     } else {
         if (['swipe', 'regenerate'].includes(type)) return;   // переигранный ответ сцены посчитается вместе со следующими
         st.turns = (st.turns || 0) + 1;
         st.chronTurns = (st.chronTurns || 0) + 1;
         const doCount = st.turns >= s.every, doChron = st.chronTurns >= s.chronEvery;
-        if (doCount || doChron) await runCycle({ counter: doCount || doChron, chron: doChron });
+        if ((doCount || doChron) && here()) await runCycle({ counter: doCount || doChron, chron: doChron });
     }
     // Рассказчик этого чата уже видел мост — отметить, что чат «догнал» мир.
     st.seenDay = currentDay();
@@ -883,7 +910,7 @@ async function onAiMessage(index, type) {
 
 async function onChatChanged() {
     if (isOurChat()) {
-        await ensureWell();
+        if (!(await ensureWell())) { inject(); return; }
         const meta = ctx().chatMetadata?.[MODULE];
         if (meta?.text && !meta.well && untouched(WELL)) { WELL = migrateOrNew(); VIEW = null; loading = Promise.resolve(WELL); await persist(); }
         markChat();

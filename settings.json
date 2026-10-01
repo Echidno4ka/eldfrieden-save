@@ -3,7 +3,7 @@
     "accountStorage": {
         "__migrated": "1",
         "WINavOpened": "true",
-        "LNavOpened": "true",
+        "LNavOpened": "false",
         "NavOpened": "false",
         "StoryStringValidationCache": "{\"hashCache\":{\"3090278210222208\":{\"fieldsWarned\":{}}}}",
         "SelectedNavTab": "rm_button_characters",
@@ -913,7 +913,7 @@
         "repetition_penalty_openai": 1,
         "stream_openai": false,
         "openai_max_context": 451977,
-        "openai_max_tokens": 10000,
+        "openai_max_tokens": 8000,
         "prompts": [
             {
                 "name": "Main Prompt",
@@ -1174,7 +1174,7 @@
         "custom_include_body": "",
         "custom_exclude_body": "",
         "custom_include_headers": "",
-        "openrouter_model": "deepseek/deepseek-v4.1-flash",
+        "openrouter_model": "~google/gemini-flash-latest",
         "openrouter_use_fallback": true,
         "openrouter_providers": [
             "DeepSeek"
@@ -1203,7 +1203,7 @@
         "tool_call_recurse_limit": 5,
         "names_behavior": 0,
         "continue_postfix": " ",
-        "custom_prompt_post_processing": "semi_tools",
+        "custom_prompt_post_processing": "",
         "show_thoughts": false,
         "reasoning_effort": "min",
         "verbosity": "auto",
